@@ -1,0 +1,149 @@
+import { getRepository } from "typeorm";
+import { User } from "./entities/User";
+
+const userRepository = getRepository(User);
+
+const newUser = userRepository.create({
+  id: 1595997,
+  ipAddress: "129.205.124.237",
+  twitterId: "1745410122187255808",
+  discordId: "1198906301183430697",
+  githubId: "92213596",
+  telegramId: "1170432056",
+  isAdmin: false,
+  isBanned: false,
+  hasCompletedFirstQuest: true,
+  xp: 1308,
+});
+
+await userRepository.save(newUser);
+console.log("User created:", newUser);
+import { getRepository } from "typeorm";
+import { UserAddress } from "./entities/UserAddress";
+
+const userAddressRepository = getRepository(UserAddress);
+
+const address = userAddressRepository.create({
+  label: "follyb",
+  color: "#5E5CE6",
+  address: "3X7VuNMjjpRYyNnf2Xd6pYSKLCHBoVBe4FdrYDj4vNra",
+  baseNetwork: "SOLANA",
+});
+
+await userAddressRepository.save(address);
+console.log("User Address saved:", address);
+const user = await userRepository.findOne({
+  where: { id: 1595997 },
+  relations: ["UserAddresses"],
+});
+
+console.log("User with addresses:", user);
+await userRepository.update(
+  { id: 1595997 },
+  { xp: 2000 }
+);
+console.log("User XP updated!");
+await userAddressRepository.delete({ id: 7701984 });
+console.log("User Address deleted.");
+import { getConnection } from "typeorm";
+
+const result = await getConnection().query(`
+  SELECT * FROM user WHERE id = 1595997
+`);
+console.log(result);
+
+//?
+-- 🟢 Table: User
+CREATE TABLE User (
+    id BIGINT PRIMARY KEY,
+    username VARCHAR(255) NULL,
+    ipAddress VARCHAR(50) NOT NULL,
+    avatarCid VARCHAR(255) NULL,
+    coverCid VARCHAR(255) NULL,
+    isAdmin BOOLEAN DEFAULT FALSE,
+    isAmbassador BOOLEAN DEFAULT FALSE,
+    isBuilder BOOLEAN DEFAULT FALSE,
+    isTester BOOLEAN DEFAULT FALSE,
+    email VARCHAR(255) NULL,
+    twitterId VARCHAR(255),
+    discordId VARCHAR(255),
+    githubId VARCHAR(255),
+    telegramId VARCHAR(255),
+    websiteUrl VARCHAR(255) NULL,
+    farcasterId VARCHAR(255) NULL,
+    isBanned BOOLEAN DEFAULT FALSE,
+    isSolanaOnboarded BOOLEAN DEFAULT FALSE,
+    markedAsBot BOOLEAN DEFAULT FALSE,
+    hasSeenFeatureAnnouncement BOOLEAN DEFAULT FALSE,
+    hasAcceptedPredictionTerms BOOLEAN DEFAULT FALSE,
+    otpEnabled BOOLEAN DEFAULT FALSE,
+    hasBuilderStakingBypass BOOLEAN DEFAULT FALSE,
+    hasGuildStakingBypass BOOLEAN DEFAULT FALSE,
+    SmartWallet VARCHAR(255) NULL,
+    xp INT DEFAULT 0,
+    hasCompletedFirstQuest BOOLEAN DEFAULT FALSE
+);
+
+-- 🟢 Table: UserAddress
+CREATE TABLE UserAddress (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    userId BIGINT,
+    label VARCHAR(255),
+    color VARCHAR(10),
+    address VARCHAR(255) NOT NULL,
+    walletType VARCHAR(255) NULL,
+    baseNetwork ENUM('EVM', 'SOLANA') NOT NULL,
+    username VARCHAR(255) NULL,
+    FOREIGN KEY (userId) REFERENCES User(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: UserPrimaryAddress
+CREATE TABLE UserPrimaryAddress (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    userId BIGINT,
+    baseNetwork ENUM('EVM', 'SOLANA') NOT NULL,
+    addressId BIGINT,
+    FOREIGN KEY (userId) REFERENCES User(id) ON DELETE CASCADE,
+    FOREIGN KEY (addressId) REFERENCES UserAddress(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: JsonData (Contains Access Token)
+CREATE TABLE JsonData (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    userId BIGINT,
+    accessToken TEXT NULL,
+    FOREIGN KEY (userId) REFERENCES User(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: Data
+CREATE TABLE Data (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    jsonId BIGINT NULL,
+    meta JSON NOT NULL,
+    FOREIGN KEY (jsonId) REFERENCES JsonData(id) ON DELETE SET NULL
+);
+
+-- 🟢 Table: Result
+CREATE TABLE Result (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    dataId BIGINT,
+    FOREIGN KEY (dataId) REFERENCES Data(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: Record (Top-Level Table)
+CREATE TABLE Record (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    resultId BIGINT,
+    FOREIGN KEY (resultId) REFERENCES Result(id) ON DELETE CASCADE
+);
+
+INSERT INTO User (id, ipAddress, twitterId, discordId, githubId, telegramId, xp, hasCompletedFirstQuest) 
+VALUES (1595997, '129.205.124.237', '1745410122187255808', '1198906301183430697', '92213596', '1170432056', 1308, TRUE);
+INSERT INTO UserAddress (userId, label, color, address, baseNetwork) 
+VALUES (1595997, 'follyb', '#5E5CE6', '3X7VuNMjjpRYyNnf2Xd6pYSKLCHBoVBe4FdrYDj4vNra', 'SOLANA');
+SELECT u.*, ua.address, ua.baseNetwork 
+FROM User u
+LEFT JOIN UserAddress ua ON u.id = ua.userId
+WHERE u.id = 1595997;
+UPDATE User SET xp = 2000 WHERE id = 1595997;
+DELETE FROM User WHERE id = 1595997;

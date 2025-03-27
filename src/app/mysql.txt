@@ -1,0 +1,405 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToMany,
+  OneToOne,
+  JoinColumn,
+  ManyToOne,
+} from "typeorm";
+
+@Entity()
+export class UserAddress {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  label: string;
+
+  @Column()
+  color: string;
+
+  @Column()
+  address: string;
+
+  @Column({ nullable: true })
+  walletType: string;
+
+  @Column()
+  baseNetwork: string;
+
+  @Column({ nullable: true })
+  username: string;
+}
+
+@Entity()
+export class UserPrimaryAddress {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  baseNetwork: string;
+
+  @OneToOne(() => UserAddress)
+  @JoinColumn()
+  UserAddress: UserAddress;
+}
+
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ nullable: true })
+  username: string;
+
+  @Column()
+  ipAddress: string;
+
+  @Column({ nullable: true })
+  avatarCid: string;
+
+  @Column({ nullable: true })
+  coverCid: string;
+
+  @Column()
+  isAdmin: boolean;
+
+  @Column()
+  isAmbassador: boolean;
+
+  @Column()
+  isBuilder: boolean;
+
+  @Column()
+  isTester: boolean;
+
+  @Column({ nullable: true })
+  email: string;
+
+  @Column()
+  twitterId: string;
+
+  @Column()
+  discordId: string;
+
+  @Column()
+  githubId: string;
+
+  @Column()
+  telegramId: string;
+
+  @Column({ nullable: true })
+  websiteUrl: string;
+
+  @Column({ nullable: true })
+  farcasterId: string;
+
+  @Column()
+  isBanned: boolean;
+
+  @Column()
+  isSolanaOnboarded: boolean;
+
+  @Column()
+  markedAsBot: boolean;
+
+  @Column()
+  hasSeenFeatureAnnouncement: boolean;
+
+  @Column()
+  hasAcceptedPredictionTerms: boolean;
+
+  @Column()
+  otpEnabled: boolean;
+
+  @Column()
+  hasBuilderStakingBypass: boolean;
+
+  @Column()
+  hasGuildStakingBypass: boolean;
+
+  @OneToMany(() => UserAddress, (userAddress) => userAddress)
+  UserAddresses: UserAddress[];
+
+  @OneToMany(() => UserPrimaryAddress, (userPrimaryAddress) => userPrimaryAddress)
+  UserPrimaryAddresses: UserPrimaryAddress[];
+
+  @Column({ nullable: true })
+  SmartWallet: string;
+
+  @Column({ nullable: true })
+  _count: string;
+
+  @Column()
+  xp: number;
+
+  @Column()
+  hasCompletedFirstQuest: boolean;
+}
+
+@Entity()
+export class JsonData {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ nullable: true })
+  accessToken: string;
+
+  @OneToOne(() => User)
+  @JoinColumn()
+  user: User;
+}
+
+@Entity()
+export class Data {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @OneToOne(() => JsonData, { nullable: true })
+  @JoinColumn()
+  json: JsonData;
+
+  @Column("json")
+  meta: object;
+}
+
+@Entity()
+export class Result {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @OneToOne(() => Data)
+  @JoinColumn()
+  data: Data;
+}
+
+@Entity()
+export class Record {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @OneToOne(() => Result)
+  @JoinColumn()
+  result: Result;
+}
+Yes! Below is the MySQL schema using **TypeORM** (for a Node.js/TypeScript project) to match your provided JSON structure.  
+
+### MySQL Schema using TypeORM  
+
+```typescript
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  OneToMany,
+  OneToOne,
+  JoinColumn,
+  ManyToOne,
+} from "typeorm";
+
+@Entity()
+export class UserAddress {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  label: string;
+
+  @Column()
+  color: string;
+
+  @Column()
+  address: string;
+
+  @Column({ nullable: true })
+  walletType: string;
+
+  @Column()
+  baseNetwork: string;
+
+  @Column({ nullable: true })
+  username: string;
+}
+
+@Entity()
+export class UserPrimaryAddress {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  baseNetwork: string;
+
+  @OneToOne(() => UserAddress)
+  @JoinColumn()
+  UserAddress: UserAddress;
+}
+
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ nullable: true })
+  username: string;
+
+  @Column()
+  ipAddress: string;
+
+  @Column({ nullable: true })
+  avatarCid: string;
+
+  @Column({ nullable: true })
+  coverCid: string;
+
+  @Column()
+  isAdmin: boolean;
+
+  @Column()
+  isAmbassador: boolean;
+
+  @Column()
+  isBuilder: boolean;
+
+  @Column()
+  isTester: boolean;
+
+  @Column({ nullable: true })
+  email: string;
+
+  @Column()
+  twitterId: string;
+
+  @Column()
+  discordId: string;
+
+  @Column()
+  githubId: string;
+
+  @Column()
+  telegramId: string;
+
+  @Column({ nullable: true })
+  websiteUrl: string;
+
+  @Column({ nullable: true })
+  farcasterId: string;
+
+  @Column()
+  isBanned: boolean;
+
+  @Column()
+  isSolanaOnboarded: boolean;
+
+  @Column()
+  markedAsBot: boolean;
+
+  @Column()
+  hasSeenFeatureAnnouncement: boolean;
+
+  @Column()
+  hasAcceptedPredictionTerms: boolean;
+
+  @Column()
+  otpEnabled: boolean;
+
+  @Column()
+  hasBuilderStakingBypass: boolean;
+
+  @Column()
+  hasGuildStakingBypass: boolean;
+
+  @OneToMany(() => UserAddress, (userAddress) => userAddress)
+  UserAddresses: UserAddress[];
+
+  @OneToMany(() => UserPrimaryAddress, (userPrimaryAddress) => userPrimaryAddress)
+  UserPrimaryAddresses: UserPrimaryAddress[];
+
+  @Column({ nullable: true })
+  SmartWallet: string;
+
+  @Column({ nullable: true })
+  _count: string;
+
+  @Column()
+  xp: number;
+
+  @Column()
+  hasCompletedFirstQuest: boolean;
+}
+
+@Entity()
+export class JsonData {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ nullable: true })
+  accessToken: string;
+
+  @OneToOne(() => User)
+  @JoinColumn()
+  user: User;
+}
+
+@Entity()
+export class Data {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @OneToOne(() => JsonData, { nullable: true })
+  @JoinColumn()
+  json: JsonData;
+
+  @Column("json")
+  meta: object;
+}
+
+@Entity()
+export class Result {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @OneToOne(() => Data)
+  @JoinColumn()
+  data: Data;
+}
+
+@Entity()
+export class Record {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @OneToOne(() => Result)
+  @JoinColumn()
+  result: Result;
+}
+```
+
+### Explanation:
+1. **UserAddress & UserPrimaryAddress**  
+   - `UserAddresses` is a list of user wallet addresses.  
+   - `UserPrimaryAddresses` contains primary wallet addresses.  
+
+2. **User Entity**  
+   - Stores all user-related details including Twitter, Discord, and GitHub IDs.  
+   - Has relationships with `UserAddress` and `UserPrimaryAddress`.  
+
+3. **JsonData Entity**  
+   - Holds an `accessToken` and a `user`.  
+
+4. **Data Entity**  
+   - Contains a `json` object and a `meta` field.  
+
+5. **Result Entity**  
+   - Contains a `data` field, linking it to `Data`.  
+
+6. **Record Entity**  
+   - The top-level entity that links everything together.  
+
+### MySQL Table Relationships:
+- `Record → Result → Data → JsonData → User`  
+- `User → UserAddresses & UserPrimaryAddresses`  
+
+This schema is **normalized** and uses proper relationships between tables while keeping everything structured.
+
+Would you like an SQL `CREATE TABLE` script instead? 🚀

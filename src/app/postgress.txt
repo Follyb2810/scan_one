@@ -1,0 +1,246 @@
+-- 🟢 Table: User
+CREATE TABLE "User" (
+    id BIGINT PRIMARY KEY,
+    username TEXT NULL,
+    ip_address TEXT NOT NULL,
+    avatar_cid TEXT NULL,
+    cover_cid TEXT NULL,
+    is_admin BOOLEAN DEFAULT FALSE,
+    is_ambassador BOOLEAN DEFAULT FALSE,
+    is_builder BOOLEAN DEFAULT FALSE,
+    is_tester BOOLEAN DEFAULT FALSE,
+    email TEXT NULL,
+    twitter_id TEXT NULL,
+    discord_id TEXT NULL,
+    github_id TEXT NULL,
+    telegram_id TEXT NULL,
+    website_url TEXT NULL,
+    farcaster_id TEXT NULL,
+    is_banned BOOLEAN DEFAULT FALSE,
+    is_solana_onboarded BOOLEAN DEFAULT FALSE,
+    marked_as_bot BOOLEAN DEFAULT FALSE,
+    has_seen_feature_announcement BOOLEAN DEFAULT FALSE,
+    has_accepted_prediction_terms BOOLEAN DEFAULT FALSE,
+    otp_enabled BOOLEAN DEFAULT FALSE,
+    has_builder_staking_bypass BOOLEAN DEFAULT FALSE,
+    has_guild_staking_bypass BOOLEAN DEFAULT FALSE,
+    smart_wallet TEXT NULL,
+    xp INT DEFAULT 0,
+    has_completed_first_quest BOOLEAN DEFAULT FALSE
+);
+
+-- 🟢 Table: UserAddress
+CREATE TABLE "UserAddress" (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    label TEXT NULL,
+    color TEXT NULL,
+    address TEXT NOT NULL,
+    wallet_type TEXT NULL,
+    base_network TEXT CHECK (base_network IN ('EVM', 'SOLANA')),
+    username TEXT NULL,
+    FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: UserPrimaryAddress
+CREATE TABLE "UserPrimaryAddress" (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    base_network TEXT CHECK (base_network IN ('EVM', 'SOLANA')),
+    address_id BIGINT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE,
+    FOREIGN KEY (address_id) REFERENCES "UserAddress"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: JsonData (Contains Access Token)
+CREATE TABLE "JsonData" (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    access_token TEXT NULL,
+    FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: Data
+CREATE TABLE "Data" (
+    id BIGSERIAL PRIMARY KEY,
+    json_id BIGINT NULL,
+    meta JSONB NOT NULL,
+    FOREIGN KEY (json_id) REFERENCES "JsonData"(id) ON DELETE SET NULL
+);
+
+-- 🟢 Table: Result
+CREATE TABLE "Result" (
+    id BIGSERIAL PRIMARY KEY,
+    data_id BIGINT NOT NULL,
+    FOREIGN KEY (data_id) REFERENCES "Data"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: Record (Top-Level Table)
+CREATE TABLE "Record" (
+    id BIGSERIAL PRIMARY KEY,
+    result_id BIGINT NOT NULL,
+    FOREIGN KEY (result_id) REFERENCES "Result"(id) ON DELETE CASCADE
+);
+
+Here’s the **PostgreSQL `CREATE TABLE` script**, optimized for your JSON structure with proper **relationships** and **data types**. 🚀  
+
+---
+
+## **🔹 PostgreSQL Schema (`CREATE TABLE` Statements)**  
+
+```sql
+-- 🟢 Table: User
+CREATE TABLE "User" (
+    id BIGINT PRIMARY KEY,
+    username TEXT NULL,
+    ip_address TEXT NOT NULL,
+    avatar_cid TEXT NULL,
+    cover_cid TEXT NULL,
+    is_admin BOOLEAN DEFAULT FALSE,
+    is_ambassador BOOLEAN DEFAULT FALSE,
+    is_builder BOOLEAN DEFAULT FALSE,
+    is_tester BOOLEAN DEFAULT FALSE,
+    email TEXT NULL,
+    twitter_id TEXT NULL,
+    discord_id TEXT NULL,
+    github_id TEXT NULL,
+    telegram_id TEXT NULL,
+    website_url TEXT NULL,
+    farcaster_id TEXT NULL,
+    is_banned BOOLEAN DEFAULT FALSE,
+    is_solana_onboarded BOOLEAN DEFAULT FALSE,
+    marked_as_bot BOOLEAN DEFAULT FALSE,
+    has_seen_feature_announcement BOOLEAN DEFAULT FALSE,
+    has_accepted_prediction_terms BOOLEAN DEFAULT FALSE,
+    otp_enabled BOOLEAN DEFAULT FALSE,
+    has_builder_staking_bypass BOOLEAN DEFAULT FALSE,
+    has_guild_staking_bypass BOOLEAN DEFAULT FALSE,
+    smart_wallet TEXT NULL,
+    xp INT DEFAULT 0,
+    has_completed_first_quest BOOLEAN DEFAULT FALSE
+);
+
+-- 🟢 Table: UserAddress
+CREATE TABLE "UserAddress" (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    label TEXT NULL,
+    color TEXT NULL,
+    address TEXT NOT NULL,
+    wallet_type TEXT NULL,
+    base_network TEXT CHECK (base_network IN ('EVM', 'SOLANA')),
+    username TEXT NULL,
+    FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: UserPrimaryAddress
+CREATE TABLE "UserPrimaryAddress" (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    base_network TEXT CHECK (base_network IN ('EVM', 'SOLANA')),
+    address_id BIGINT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE,
+    FOREIGN KEY (address_id) REFERENCES "UserAddress"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: JsonData (Contains Access Token)
+CREATE TABLE "JsonData" (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    access_token TEXT NULL,
+    FOREIGN KEY (user_id) REFERENCES "User"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: Data
+CREATE TABLE "Data" (
+    id BIGSERIAL PRIMARY KEY,
+    json_id BIGINT NULL,
+    meta JSONB NOT NULL,
+    FOREIGN KEY (json_id) REFERENCES "JsonData"(id) ON DELETE SET NULL
+);
+
+-- 🟢 Table: Result
+CREATE TABLE "Result" (
+    id BIGSERIAL PRIMARY KEY,
+    data_id BIGINT NOT NULL,
+    FOREIGN KEY (data_id) REFERENCES "Data"(id) ON DELETE CASCADE
+);
+
+-- 🟢 Table: Record (Top-Level Table)
+CREATE TABLE "Record" (
+    id BIGSERIAL PRIMARY KEY,
+    result_id BIGINT NOT NULL,
+    FOREIGN KEY (result_id) REFERENCES "Result"(id) ON DELETE CASCADE
+);
+```
+
+---
+
+## **📌 Explanation:**
+1. **`User` Table**  
+   - Stores user information (Twitter ID, Discord ID, XP, etc.).
+   
+2. **`UserAddress` Table**  
+   - Stores multiple **blockchain addresses** for each user.
+   
+3. **`UserPrimaryAddress` Table**  
+   - Stores **primary** user addresses.
+   
+4. **`JsonData` Table**  
+   - Stores `accessToken` for authentication.
+   
+5. **`Data` Table**  
+   - Stores **JSON metadata** using `JSONB` for better indexing.
+   
+6. **`Result` Table**  
+   - Links `Data` for hierarchical structuring.
+   
+7. **`Record` Table**  
+   - The **top-level entry** referencing `Result`.
+
+---
+
+## **🔹 Sample Queries**
+
+### ✅ **Insert a User**
+```sql
+INSERT INTO "User" (id, ip_address, twitter_id, discord_id, github_id, telegram_id, xp, has_completed_first_quest) 
+VALUES (1595997, '129.205.124.237', '1745410122187255808', '1198906301183430697', '92213596', '1170432056', 1308, TRUE);
+```
+
+### ✅ **Insert a User Address**
+```sql
+INSERT INTO "UserAddress" (user_id, label, color, address, base_network) 
+VALUES (1595997, 'follyb', '#5E5CE6', '3X7VuNMjjpRYyNnf2Xd6pYSKLCHBoVBe4FdrYDj4vNra', 'SOLANA');
+```
+
+### ✅ **Fetch a User and Their Addresses**
+```sql
+SELECT u.*, ua.address, ua.base_network 
+FROM "User" u
+LEFT JOIN "UserAddress" ua ON u.id = ua.user_id
+WHERE u.id = 1595997;
+```
+
+### ✅ **Update XP for a User**
+```sql
+UPDATE "User" SET xp = 2000 WHERE id = 1595997;
+```
+
+### ✅ **Delete a User (Cascade Deletes Addresses & Data)**
+```sql
+DELETE FROM "User" WHERE id = 1595997;
+```
+
+---
+
+## **🚀 PostgreSQL Features Used**
+✔ **`BIGSERIAL` for Auto-Increment IDs**  
+✔ **`JSONB` for Efficient JSON Storage & Queries**  
+✔ **`CHECK` Constraint for Enforcing `EVM` & `SOLANA` in `base_network`**  
+✔ **`CASCADE` Deletes to Clean Up Related Records Automatically**  
+
+---
+
+## **💡 Need More?**
+Let me know if you need **modifications**, **queries**, or **optimizations**! 🚀

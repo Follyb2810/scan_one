@@ -1,0 +1,137 @@
+import mongoose, { Schema, Document } from "mongoose";
+
+interface IUserAddress {
+  id: number;
+  label: string;
+  color: string;
+  address: string;
+  walletType: string | null;
+  baseNetwork: string;
+  username: string | null;
+}
+
+interface IUserPrimaryAddress {
+  baseNetwork: string;
+  UserAddress: IUserAddress;
+}
+
+interface IUser {
+  id: number;
+  username: string | null;
+  ipAddress: string;
+  avatarCid: string | null;
+  coverCid: string | null;
+  isAdmin: boolean;
+  isAmbassador: boolean;
+  isBuilder: boolean;
+  isTester: boolean;
+  email: string | null;
+  twitterId: string;
+  discordId: string;
+  githubId: string;
+  telegramId: string;
+  websiteUrl: string | null;
+  farcasterId: string | null;
+  isBanned: boolean;
+  isSolanaOnboarded: boolean;
+  markedAsBot: boolean;
+  hasSeenFeatureAnnouncement: boolean;
+  hasAcceptedPredictionTerms: boolean;
+  otpEnabled: boolean;
+  hasBuilderStakingBypass: boolean;
+  hasGuildStakingBypass: boolean;
+  UserAddresses: IUserAddress[];
+  UserPrimaryAddresses: IUserPrimaryAddress[];
+  SmartWallet: string | null;
+  _count: string | null;
+  xp: number;
+  hasCompletedFirstQuest: boolean;
+}
+
+interface IJsonData {
+  accessToken?: string;
+  user?: IUser;
+}
+
+interface IData {
+  json: IJsonData | null;
+  meta: Record<string, any>;
+}
+
+interface IResult {
+  data: IData;
+}
+
+interface IRecord extends Document {
+  result: IResult;
+}
+
+const UserAddressSchema = new Schema<IUserAddress>({
+  id: Number,
+  label: String,
+  color: String,
+  address: String,
+  walletType: { type: String, default: null },
+  baseNetwork: String,
+  username: { type: String, default: null },
+});
+
+const UserPrimaryAddressSchema = new Schema<IUserPrimaryAddress>({
+  baseNetwork: String,
+  UserAddress: UserAddressSchema,
+});
+
+const UserSchema = new Schema<IUser>({
+  id: Number,
+  username: { type: String, default: null },
+  ipAddress: String,
+  avatarCid: { type: String, default: null },
+  coverCid: { type: String, default: null },
+  isAdmin: Boolean,
+  isAmbassador: Boolean,
+  isBuilder: Boolean,
+  isTester: Boolean,
+  email: { type: String, default: null },
+  twitterId: String,
+  discordId: String,
+  githubId: String,
+  telegramId: String,
+  websiteUrl: { type: String, default: null },
+  farcasterId: { type: String, default: null },
+  isBanned: Boolean,
+  isSolanaOnboarded: Boolean,
+  markedAsBot: Boolean,
+  hasSeenFeatureAnnouncement: Boolean,
+  hasAcceptedPredictionTerms: Boolean,
+  otpEnabled: Boolean,
+  hasBuilderStakingBypass: Boolean,
+  hasGuildStakingBypass: Boolean,
+  UserAddresses: [UserAddressSchema],
+  UserPrimaryAddresses: [UserPrimaryAddressSchema],
+  SmartWallet: { type: String, default: null },
+  _count: { type: String, default: null },
+  xp: Number,
+  hasCompletedFirstQuest: Boolean,
+});
+
+const JsonDataSchema = new Schema<IJsonData>({
+  accessToken: { type: String, default: null },
+  user: { type: UserSchema, default: null },
+});
+
+const DataSchema = new Schema<IData>({
+  json: { type: JsonDataSchema, default: null },
+  meta: { type: Schema.Types.Mixed, required: true },
+});
+
+const ResultSchema = new Schema<IResult>({
+  data: { type: DataSchema, required: true },
+});
+
+const RecordSchema = new Schema<IRecord>({
+  result: { type: ResultSchema, required: true },
+});
+
+const RecordModel = mongoose.model<IRecord>("Record", RecordSchema);
+
+export default RecordModel;
