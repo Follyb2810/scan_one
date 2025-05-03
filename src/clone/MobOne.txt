@@ -1,0 +1,96 @@
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, Button, FlatList } from 'react-native';
+import axios from 'axios';
+import { Calendar } from 'react-native-calendars';
+
+const App = () => {
+  const [token, setToken] = useState('');
+  const [emails, setEmails] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [recipient, setRecipient] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+
+  useEffect(() => {
+    if (token) {
+      fetchEmails();
+      fetchEvents();
+    }
+  }, [token]);
+
+  const fetchEmails = async () => {
+    const res = await axios.get('http://localhost:5000/api/emails', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setEmails(res.data);
+  };
+
+  const fetchEvents = async () => {
+    const res = await axios.get('http://localhost:5000/api/events', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setEvents(res.data);
+  };
+
+  const sendEmail = async () => {
+    await axios.post(
+      'http://localhost:5000/api/emails',
+      { recipient, subject, body },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    fetchEmails();
+  };
+
+  const handleLogin = async () => {
+    const res = await axios.post('http://localhost:5000/api/users/login', {
+      email: 'test@example.com',
+      password: 'password',
+    });
+    setToken(res.data.token);
+  };
+
+  return (
+    <View style={{ padding: 20 }}>
+      {!token ? (
+        <Button title="Login" onPress={handleLogin} />
+      ) : (
+        <>
+          <Text>Email Client</Text>
+          <TextInput
+            placeholder="Recipient"
+            value={recipient}
+            onChangeText={setRecipient}
+          />
+          <TextInput
+            placeholder="Subject"
+            value={subject}
+            onChangeText={setSubject}
+          />
+          <TextInput
+            placeholder="Body"
+            value={body}
+            onChangeText={setBody}
+            multiline
+          />
+          <Button title="Send Email" onPress={sendEmail} />
+          <FlatList
+            data={emails}
+            keyExtractor={item => item._id}
+            renderItem={({ item }) => (
+              <Text>{item.subject} - From: {item.sender}</Text>
+            )}
+          />
+          <Text>Calendar</Text>
+          <Calendar
+            markedDates={events.reduce((acc, event) => ({
+              ...acc,
+              [event.start.split('T')[0]]: { marked: true },
+            }), {})}
+          />
+        </>
+      )}
+    </View>
+  );
+};
+
+export default App;

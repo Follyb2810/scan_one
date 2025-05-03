@@ -1,0 +1,327 @@
+tiktok-clone/
+├── models/
+│   ├── User.js
+│   ├── Video.js
+│   ├── Notification.js
+│   ├── Chat.js
+│   ├── MessageRequest.js
+│   └── Gift.js
+├── controllers/
+│   ├── userController.js
+│   ├── videoController.js
+│   ├── notificationController.js
+│   ├── chatController.js
+│   └── giftController.js
+├── routes/
+│   ├── userRoutes.js
+│   ├── videoRoutes.js
+│   ├── notificationRoutes.js
+│   ├── chatRoutes.js
+│   └── giftRoutes.js
+├── app.js
+└── package.json
+
+
+npm init -y
+npm install express mongoose dotenv
+
+const express = require('express');
+const mongoose = require('mongoose');
+require('dotenv').config();
+
+const app = express();
+app.use(express.json());
+
+// MongoDB connection
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.log(err));
+
+// Routes
+app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/videos', require('./routes/videoRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/chats', require('./routes/chatRoutes'));
+app.use('/api/gifts', require('./routes/giftRoutes'));
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+MONGO_URI=mongodb://localhost:27017/tiktok_clone
+PORT=5000
+
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true }, // Hash this in production
+  profilePic: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('User', userSchema);
+
+const mongoose = require('mongoose');
+
+const videoSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  url: { type: String, required: true }, // Video URL (e.g., stored in cloud storage like AWS S3)
+  description: { type: String },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Video', videoSchema);
+const mongoose = require('mongoose');
+
+const notificationSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  message: { type: String, required: true },
+  read: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Notification', notificationSchema);
+const mongoose = require('mongoose');
+
+const chatSchema = new mongoose.Schema({
+  participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  messages: [{
+    sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    content: { type: String },
+    createdAt: { type: Date, default: Date.now }
+  }]
+});
+
+module.exports = mongoose.model('Chat', chatSchema);
+const mongoose = require('mongoose');
+
+const messageRequestSchema = new mongoose.Schema({
+  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  receiverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('MessageRequest', messageRequestSchema);
+
+const mongoose = require('mongoose');
+
+const giftSchema = new mongoose.Schema({
+  senderId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  receiverId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  giftType: { type: String, required: true }, // e.g., "sticker", "coin"
+  amount: { type: Number, default: 1 },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Gift', giftSchema);
+const User = require('../models/User');
+
+exports.registerUser = async (req, res) => {
+  const { username, email, password } = req.body;
+  try {
+    const user = new User({ username, email, password });
+    await user.save();
+    res.status(201).json(user);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};const Video = require('../models/Video');
+
+exports.uploadVideo = async (req, res) => {
+  const { userId, url, description } = req.body;
+  try {
+    const video = new Video({ userId, url, description });
+    await video.save();
+    res.status(201).json(video);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getVideoFeed = async (req, res) => {
+  try {
+    const videos = await Video.find().populate('userId', 'username profilePic');
+    res.json(videos);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+const Video = require('../models/Video');
+
+exports.uploadVideo = async (req, res) => {
+  const { userId, url, description } = req.body;
+  try {
+    const video = new Video({ userId, url, description });
+    await video.save();
+    res.status(201).json(video);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getVideoFeed = async (req, res) => {
+  try {
+    const videos = await Video.find().populate('userId', 'username profilePic');
+    res.json(videos);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const Notification = require('../models/Notification');
+
+exports.createNotification = async (req, res) => {
+  const { userId, message } = req.body;
+  try {
+    const notification = new Notification({ userId, message });
+    await notification.save();
+    res.status(201).json(notification);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getNotifications = async (req, res) => {
+  try {
+    const notifications = await Notification.find({ userId: req.params.userId });
+    res.json(notifications);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const Chat = require('../models/Chat');
+const MessageRequest = require('../models/MessageRequest');
+
+exports.sendMessageRequest = async (req, res) => {
+  const { senderId, receiverId } = req.body;
+  try {
+    const request = new MessageRequest({ senderId, receiverId });
+    await request.save();
+    res.status(201).json(request);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.acceptMessageRequest = async (req, res) => {
+  try {
+    const request = await MessageRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ message: 'Request not found' });
+    request.status = 'accepted';
+    await request.save();
+
+    const chat = new Chat({ participants: [request.senderId, request.receiverId] });
+    await chat.save();
+    res.json(chat);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.sendMessage = async (req, res) => {
+  const { chatId, senderId, content } = req.body;
+  try {
+    const chat = await Chat.findById(chatId);
+    if (!chat) return res.status(404).json({ message: 'Chat not found' });
+    chat.messages.push({ sender: senderId, content });
+    await chat.save();
+    res.json(chat);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+const Gift = require('../models/Gift');
+
+exports.sendGift = async (req, res) => {
+  const { senderId, receiverId, giftType, amount } = req.body;
+  try {
+    const gift = new Gift({ senderId, receiverId, giftType, amount });
+    await gift.save();
+    res.status(201).json(gift);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.getUserGifts = async (req, res) => {
+  try {
+    const gifts = await Gift.find({ receiverId: req.params.userId });
+    res.json(gifts);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+
+const express = require('express');
+const { registerUser, getProfile } = require('../controllers/userController');
+const router = express.Router();
+
+router.post('/register', registerUser);
+router.get('/:id', getProfile);
+
+module.exports = router;
+
+
+
+const express = require('express');
+const { uploadVideo, getVideoFeed } = require('../controllers/videoController');
+const router = express.Router();
+
+router.post('/upload', uploadVideo);
+router.get('/feed', getVideoFeed);
+
+module.exports = router;
+
+
+const express = require('express');
+const { createNotification, getNotifications } = require('../controllers/notificationController');
+const router = express.Router();
+
+router.post('/', createNotification);
+router.get('/:userId', getNotifications);
+
+module.exports = router;
+
+const express = require('express');
+const { createNotification, getNotifications } = require('../controllers/notificationController');
+const router = express.Router();
+
+router.post('/', createNotification);
+router.get('/:userId', getNotifications);
+
+module.exports = router;
+
+const express = require('express');
+const { sendMessageRequest, acceptMessageRequest, sendMessage } = require('../controllers/chatController');
+const router = express.Router();
+
+router.post('/request', sendMessageRequest);
+router.put('/request/:id/accept', acceptMessageRequest);
+router.post('/:chatId/message', sendMessage);
+
+module.exports = router;
+
+
+
+const express = require('express');
+const { sendGift, getUserGifts } = require('../controllers/giftController');
+const router = express.Router();
+
+router.post('/', sendGift);
+router.get('/:userId', getUserGifts);
+
+module.exports = router;
+

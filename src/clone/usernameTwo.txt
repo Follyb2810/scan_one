@@ -1,0 +1,390 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Container, TextField, Button, List, ListItem, Typography } from '@mui/material';
+
+const App = () => {
+  // ... other state and functions ...
+
+  const updateUsername = async () => {
+    const newUsername = prompt('Enter new username (3-20 characters)');
+    if (newUsername) {
+      try {
+        await axios.post('http://localhost:5000/api/users/username', {
+          walletAddress: address,
+          newUsername,
+        });
+        setUsername(newUsername);
+      } catch (error) {
+        alert(error.response?.data?.message || 'Failed to update username');
+      }
+    }
+  };
+
+  return (
+    <Container>
+      {/* ... other components ... */}
+      <Typography variant="h6">Wallet: {address}</Typography>
+      <Typography variant="h6">Username: {username}</Typography>
+      <Button onClick={updateUsername} variant="outlined">Update Username</Button>
+      {/* ... email and calendar components ... */}
+    </Container>
+  );
+};
+
+For your Web3 email and calendar app, the username generation system should balance simplicity, uniqueness, and user-friendliness while aligning with the decentralized, wallet-based ethos. Since users register with their wallet address and you want a short, auto-generated username they can later update, I’ll suggest improvements to the username generation logic, explain why they work for your project, and provide code to enhance the existing implementation. This will fit within your Express.js and MongoDB backend and support the Web3 vibe.
+
+### Why Improve Username Generation?
+The current implementation in the backend (`server.js`) uses `crypto.randomBytes(3).toString('hex')` to generate a 6-character username (e.g., "a1b2c3"). While functional, it has drawbacks:
+- **Readability**: Hex strings (e.g., "4f9a2b") are hard to remember and feel impersonal.
+- **Aesthetics**: Web3 users expect a sleek, modern experience, and cryptic usernames may feel clunky.
+- **Collision Risk**: With only 6 characters, the namespace is limited (16^6 ≈ 16.7 million combinations), which could lead to collisions as your user base grows.
+- **User Appeal**: A more human-friendly username (e.g., "StarViper123") enhances engagement, especially for an email and calendar app where users interact frequently.
+
+### Suggestions for Username Generation
+Here are three approaches to improve username generation, ordered by complexity and suitability for your Web3 app:
+
+#### 1. Adjective-Noun-Number Combo (Recommended)
+- **How It Works**: Combine a random adjective, noun, and number (e.g., "QuickFox42").
+- **Why It’s Great**:
+  - **Memorable**: Human-readable and fun (e.g., "BraveWolf789").
+  - **Scalable**: Millions of combinations (e.g., 100 adjectives × 100 nouns × 1000 numbers = 1 billion).
+  - **Web3 Vibe**: Feels modern and aligns with NFT-style naming (like "BoredApe").
+  - **Customizable**: Users can update to a preferred name later.
+- **Implementation**: Use predefined lists of adjectives and nouns, plus a random number.
+- **Drawback**: Requires a small word list, but this is easy to manage.
+
+#### 2. Wallet Address Truncation with Suffix
+- **How It Works**: Use a shortened version of the wallet address (e.g., first 6 characters) plus a random suffix (e.g., "0x123abc-Star").
+- **Why It’s Great**:
+  - **Web3 Native**: Ties directly to the wallet address, reinforcing decentralization.
+  - **Unique**: Wallet addresses are unique, so collisions are unlikely.
+  - **Simple**: Minimal logic needed.
+- **Implementation**: Slice the wallet address and append a random string or number.
+- **Drawback**: Less readable (e.g., "0x4f9a2b-123") and may feel too technical for casual users.
+
+#### 3. ENS-Inspired or Chain-Based Names
+- **How It Works**: Generate a username based on the blockchain (e.g., "EthQuick123" for Ethereum, "SolViper456" for Solana) or integrate ENS (Ethereum Name Service) if available.
+- **Why It’s Great**:
+  - **Chain-Specific**: Celebrates multi-chain support (Ethereum, Polygon, Solana).
+  - **Decentralized Feel**: Mimics ENS-style naming (e.g., "vitalik.eth").
+  - **Unique**: Chain prefix reduces collision risk.
+- **Implementation**: Prefix with chain name (e.g., "Eth", "Sol") and append a random word or number.
+- **Drawback**: Slightly more complex; ENS integration requires API calls and may not apply to all users.
+
+### Recommended Approach: Adjective-Noun-Number
+The **Adjective-Noun-Number** approach is the best fit for your app because:
+- It’s user-friendly and memorable, encouraging engagement with the email and calendar features.
+- It’s scalable for a growing user base.
+- It’s easy to implement in your Express.js backend without external dependencies.
+- It allows users to update their username later, preserving flexibility.
+- It feels modern and Web3-aligned, similar to usernames in NFT or DeFi communities.
+
+### Updated Backend Code
+Below, I’ll update the `generateUsername` function in your Express.js backend to use the adjective-noun-number approach. I’ll include small word lists for simplicity (you can expand them later).
+
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const { ethers } = require('ethers');
+const { Connection, PublicKey } = require('@solana/web3.js');
+const PinataSDK = require('@pinata/sdk');
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// MongoDB Connection
+mongoose.connect('mongodb://localhost:27017/web3_email_calendar', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+// Pinata Client
+const pinata = new PinataSDK({ pinataApiKey: 'your_pinata_api_key', pinataSecretApiKey: 'your_pinata_secret_key' });
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  walletAddress: { type: String, required: true, unique: true },
+  username: { type: String, unique: true },
+  chain: { type: String, enum: ['ethereum', 'polygon', 'solana'] },
+});
+const User = mongoose.model('User', userSchema);
+
+// Email Schema
+const emailSchema = new mongoose.Schema({
+  senderWallet: String,
+  recipientWallet: String,
+  subject: String,
+  bodyCid: String,
+  timestamp: { type: Date, default: Date.now },
+});
+const Email = mongoose.model('Email', emailSchema);
+
+// Event Schema
+const eventSchema = new mongoose.Schema({
+  userWallet: String,
+  title: String,
+  start: Date,
+  end: Date,
+  cid: String,
+});
+const Event = mongoose.model('Event', eventSchema);
+
+// Username Generation
+const adjectives = ['Quick', 'Brave', 'Silent', 'Bold', 'Wise', 'Swift', 'Calm', 'Fierce', 'Cool', 'Star'];
+const nouns = ['Fox', 'Wolf', 'Hawk', 'Bear', 'Lion', 'Deer', 'Viper', 'Eagle', 'Tiger', 'Shark'];
+
+const generateUsername = async () => {
+  let username;
+  const maxAttempts = 10; // Prevent infinite loops
+  let attempts = 0;
+
+  do {
+    const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const number = Math.floor(Math.random() * 1000); // 0-999
+    username = `${adjective}${noun}${number}`;
+    attempts++;
+  } while (await User.findOne({ username }) && attempts < maxAttempts);
+
+  if (attempts >= maxAttempts) {
+    throw new Error('Unable to generate unique username');
+  }
+
+  return username;
+};
+
+// Verify Ethereum/Polygon Signature
+const verifyEthSignature = async (walletAddress, signature, message) => {
+  const signer = ethers.utils.verifyMessage(message, signature);
+  return signer.toLowerCase() === walletAddress.toLowerCase();
+};
+
+// Verify Solana Signature (Placeholder)
+const verifySolanaSignature = async (walletAddress, signature, message) => {
+  // Implement Solana signature verification with @solana/web3.js
+  // Placeholder: Assume valid for now
+  return true;
+};
+
+// User Routes
+app.post('/api/users/register', async (req, res) => {
+  const { walletAddress, signature, chain } = req.body;
+  const message = 'Sign to register with Web3 Email';
+  
+  let isValid;
+  if (chain === 'solana') {
+    isValid = await verifySolanaSignature(walletAddress, signature, message);
+  } else {
+    isValid = await verifyEthSignature(walletAddress, signature, message);
+  }
+
+  if (!isValid) return res.status(401).json({ message: 'Invalid signature' });
+
+  try {
+    let user = await User.findOne({ walletAddress });
+    if (!user) {
+      const username = await generateUsername();
+      user = new User({ walletAddress, username, chain });
+      await user.save();
+    }
+    res.json({ username: user.username });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+app.post('/api/users/username', async (req, res) => {
+  const { walletAddress, newUsername } = req.body;
+  if (newUsername.length < 3 || newUsername.length > 20) {
+    return res.status(400).json({ message: 'Username must be 3-20 characters' });
+  }
+  if (await User.findOne({ username: newUsername })) {
+    return res.status(400).json({ message: 'Username taken' });
+  }
+  await User.updateOne({ walletAddress }, { username: newUsername });
+  res.json({ message: 'Username updated' });
+});
+
+// Email Routes
+app.post('/api/emails', async (req, res) => {
+  const { senderWallet, recipientUsername, subject, body } = req.body;
+  const recipient = await User.findOne({ username: recipientUsername });
+  if (!recipient) return res.status(404).json({ message: 'Recipient not found' });
+
+  const pinataResponse = await pinata.pinJSONToIPFS({ body }, {
+    pinataMetadata: { name: `email_${Date.now()}` },
+  });
+  const bodyCid = pinataResponse.IpfsHash;
+
+  const email = new Email({
+    senderWallet,
+    recipientWallet: recipient.walletAddress,
+    subject,
+    bodyCid,
+  });
+  await email.save();
+  res.status(201).json({ message: 'Email sent' });
+});
+
+app.get('/api/emails', async (req, res) => {
+  const { walletAddress } = req.query;
+  const emails = await Email.find({
+    $or: [{ senderWallet: walletAddress }, { recipientWallet: walletAddress }],
+  });
+  const emailsWithBody = await Promise.all(emails.map(async email => {
+    const response = await pinata.catJSON(email.bodyCid);
+    return { ...email._doc, body: response.body };
+  }));
+  res.json(emailsWithBody);
+});
+
+// Calendar Routes
+app.post('/api/events', async (req, res) => {
+  const { walletAddress, title, start, end } = req.body;
+  const eventData = { title, start, end };
+  
+  const pinataResponse = await pinata.pinJSONToIPFS(eventData, {
+    pinataMetadata: { name: `event_${Date.now()}` },
+  });
+  const cid = pinataResponse.IpfsHash;
+
+  const event = new Event({
+    userWallet: walletAddress,
+    title,
+    start,
+    end,
+    cid,
+  });
+  await event.save();
+  res.status(201).json({ message: 'Event created' });
+});
+
+app.get('/api/events', async (req, res) => {
+  const { walletAddress } = req.query;
+  const events = await Event.find({ userWallet: walletAddress });
+  const eventsWithDetails = await Promise.all(events.map(async event => {
+    const response = await pinata.catJSON(event.cid);
+    return { ...event._doc, details: response };
+  }));
+  res.json(eventsWithDetails);
+});
+
+app.listen(5000, () => console.log('Server running on port 5000'));
+```
+
+**Changes Made**:
+- Replaced `crypto.randomBytes` with a new `generateUsername` function using adjective-noun-number.
+- Added small lists of `adjectives` and `nouns` (expand these for more variety).
+- Included a `maxAttempts` check to prevent infinite loops in case of collisions.
+- Added basic validation in the username update route (3-20 characters).
+- Kept the rest of the code (Pinata, email, calendar) unchanged for consistency.
+
+**Expanding the Word Lists**:
+To make usernames more diverse, add more words:
+```javascript
+const adjectives = ['Quick', 'Brave', 'Silent', 'Bold', 'Wise', 'Swift', 'Calm', 'Fierce', 'Cool', 'Star', 'Lunar', 'Epic', 'Vivid', 'Chill', 'Cosmic'];
+const nouns = ['Fox', 'Wolf', 'Hawk', 'Bear', 'Lion', 'Deer', 'Viper', 'Eagle', 'Tiger', 'Shark', 'Panther', 'Raven', 'Drake', 'Stag', 'Owl'];
+```
+You can source word lists from public repositories or APIs (e.g., [random-word-api](https://github.com/mcnaveen/Random-Words-API)) or create a JSON file with hundreds of words.
+
+### Frontend Integration
+The React frontend (`App.jsx`) already displays the username returned from the `/api/users/register` endpoint. To allow users to see and update their username, ensure the update button prompts for a new username and calls the `/api/users/username` endpoint. The previous `App.jsx` is sufficient, but here’s a refined snippet for the username section:
+
+```jsx
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Container, TextField, Button, List, ListItem, Typography } from '@mui/material';
+
+const App = () => {
+  // ... other state and functions ...
+
+  const updateUsername = async () => {
+    const newUsername = prompt('Enter new username (3-20 characters)');
+    if (newUsername) {
+      try {
+        await axios.post('http://localhost:5000/api/users/username', {
+          walletAddress: address,
+          newUsername,
+        });
+        setUsername(newUsername);
+      } catch (error) {
+        alert(error.response?.data?.message || 'Failed to update username');
+      }
+    }
+  };
+
+  return (
+    <Container>
+      {/* ... other components ... */}
+      <Typography variant="h6">Wallet: {address}</Typography>
+      <Typography variant="h6">Username: {username}</Typography>
+      <Button onClick={updateUsername} variant="outlined">Update Username</Button>
+      {/* ... email and calendar components ... */}
+    </Container>
+  );
+};
+```
+
+**Note**: Replace the `prompt` with a proper form (e.g., a Material-UI dialog) for a better UX in production.
+
+### Additional Suggestions
+1. **Username Validation**:
+   - Add regex to restrict usernames to alphanumeric characters and simple symbols (e.g., underscores):
+     ```javascript
+     if (!/^[a-zA-Z0-9_]{3,20}$/.test(newUsername)) {
+       return res.status(400).json({ message: 'Username must be 3-20 alphanumeric characters or underscores' });
+     }
+     ```
+2. **Web3 Flair**:
+   - Allow users to append their chain name (e.g., "QuickFox42_Eth") during registration for multi-chain pride.
+   - Example:
+     ```javascript
+     username = `${adjective}${noun}${number}_${chain.charAt(0).toUpperCase() + chain.slice(1)}`;
+     ```
+3. **Premium Usernames**:
+   - Let users pay (via crypto) for custom or shorter usernames, stored on-chain (e.g., via a simple smart contract).
+4. **ENS Integration**:
+   - Check if the user has an ENS name (e.g., "vitalik.eth") and suggest it as their username:
+     ```javascript
+     const provider = new ethers.providers.JsonRpcProvider('https://mainnet.infura.io/v3/your_infura_key');
+     const ensName = await provider.lookupAddress(walletAddress);
+     if (ensName) username = ensName;
+     ```
+5. **Feedback on Collision**:
+   - If a user’s chosen username is taken, suggest alternatives (e.g., append a number):
+     ```javascript
+     let suggestedUsername = newUsername;
+     let counter = 1;
+     while (await User.findOne({ username: suggestedUsername })) {
+       suggestedUsername = `${newUsername}${counter}`;
+       counter++;
+     }
+     ```
+
+### Testing the Username System
+1. **Run the Backend**:
+   - Update `server.js` with the new `generateUsername` function.
+   - Start the server: `node server.js`.
+2. **Register a User**:
+   - Send a POST request to `/api/users/register` with a mock wallet address and signature.
+   - Check the response for a username like "QuickFox123".
+3. **Update Username**:
+   - Test the `/api/users/username` endpoint with a new username.
+   - Verify uniqueness checks and validation errors.
+4. **Expand Word Lists**:
+   - Add more adjectives and nouns to avoid collisions.
+   - Test with multiple registrations to ensure variety.
+
+### Notes
+- **Scalability**: The adjective-noun-number approach supports millions of combinations, but for a massive user base, consider longer usernames or dynamic word lists.
+- **User Experience**: Display the auto-generated username prominently on the frontend and make the update process intuitive (e.g., a form instead of a prompt).
+- **Web3 Alignment**: The suggested usernames feel modern and fit the Web3 aesthetic, similar to Discord or NFT project naming conventions.
+- **Solana Signature**: The Solana signature verification is a placeholder. You’ll need `@solana/web3.js` and `tweetnacl` for proper verification:
+  ```javascript
+  const nacl = require('tweetnacl');
+  ```
+  Let me know if you need help with this.
+
+This updated username system is ready to integrate with your app and enhances the user experience while keeping the Web3 spirit. If you want to explore the wallet truncation or ENS-inspired approaches further, or need help testing the new usernames, just say the word! What do you think—want to stick with this or add more Web3 pizzazz?

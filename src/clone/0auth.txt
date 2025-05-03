@@ -1,0 +1,229 @@
+To implement a role-based authentication system in your Express.js and MongoDB application, where users can log in using Google OAuth and assign roles during registration, you need to carefully design the user schema, integrate Google OAuth for authentication, and provide a mechanism for assigning roles. Below is a structured approach to achieve this:
+
+---
+
+### **1. Define the User Schema**
+Since a user can have multiple roles, the `roles` field in the user schema should be an array. This allows flexibility for assigning multiple roles to a single user.
+
+Here’s an example of how the schema might look:
+
+```javascript
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  googleId: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  name: {
+    type: String,
+    required: true,
+  },
+  roles: {
+    type: [String], // Array of roles (e.g., ['user', 'patient', 'doctor'])
+    default: ['user'], // Default role is 'user'
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
+const User = mongoose.model('User', userSchema);
+module.exports = User;
+```
+
+---
+
+### **2. Set Up Google OAuth**
+Use the `passport-google-oauth20` library to handle Google OAuth authentication. This will allow users to log in with their Google accounts.
+
+#### Install Dependencies:
+```bash
+npm install passport passport-google-oauth20 express-session dotenv
+```
+
+#### Configure Passport:
+```javascript
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const User = require('./models/User'); // Import your User model
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: '/auth/google/callback',
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        // Check if the user already exists in the database
+        const existingUser = await User.findOne({ googleId: profile.id });
+
+        if (existingUser) {
+          return done(null, existingUser); // User already exists
+        }
+
+        // Create a new user if they don't exist
+        const newUser = await User.create({
+          googleId: profile.id,
+          email: profile.emails[0].value,
+          name: profile.displayName,
+        });
+
+        return done(null, newUser);
+      } catch (error) {
+        return done(error, null);
+      }
+    }
+  )
+);
+
+// Serialize and deserialize user
+passport.serializeUser((user, done) => {
+  done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
+  } catch (error) {
+    done(error, null);
+  }
+});
+```
+
+---
+
+### **3. Implement Role Assignment During Registration**
+When a user logs in for the first time via Google, you can redirect them to a form where they can select their roles. This form should only appear if the user has just registered (i.e., no roles assigned yet).
+
+#### Example Route for Role Assignment:
+```javascript
+const express = require('express');
+const router = express.Router();
+const User = require('../models/User');
+
+// Middleware to check if the user is authenticated
+function ensureAuthenticated(req, res, next) {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+  res.redirect('/login');
+}
+
+// Route to display role selection form
+router.get('/assign-roles', ensureAuthenticated, async (req, res) => {
+  const user = await User.findById(req.user._id);
+
+  // If the user already has roles, redirect them to the dashboard
+  if (user.roles.length > 1) {
+    return res.redirect('/dashboard');
+  }
+
+  res.render('assign-roles', { user });
+});
+
+// Route to handle role assignment
+router.post('/assign-roles', ensureAuthenticated, async (req, res) => {
+  const { roles } = req.body;
+
+  try {
+    const user = await User.findById(req.user._id);
+
+    // Update the user's roles
+    user.roles = roles;
+    await user.save();
+
+    res.redirect('/dashboard');
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Error assigning roles');
+  }
+});
+```
+
+#### Example Form for Role Selection:
+```html
+<!-- views/assign-roles.ejs -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Assign Roles</title>
+</head>
+<body>
+  <h1>Welcome, <%= user.name %>!</h1>
+  <p>Please select your roles:</p>
+  <form action="/assign-roles" method="POST">
+    <label>
+      <input type="checkbox" name="roles" value="user"> User
+    </label><br>
+    <label>
+      <input type="checkbox" name="roles" value="patient"> Patient
+    </label><br>
+    <label>
+      <input type="checkbox" name="roles" value="doctor"> Doctor
+    </label><br>
+    <label>
+      <input type="checkbox" name="roles" value="lab_technician"> Lab Technician
+    </label><br>
+    <label>
+      <input type="checkbox" name="roles" value="admin"> Admin
+    </label><br>
+    <button type="submit">Submit</button>
+  </form>
+</body>
+</html>
+```
+
+---
+
+### **4. Protect Routes Based on Roles**
+You can create middleware to protect routes based on the user's roles.
+
+#### Example Role-Based Middleware:
+```javascript
+function authorizeRole(...allowedRoles) {
+  return (req, res, next) => {
+    const userRoles = req.user.roles;
+
+    // Check if the user has at least one of the allowed roles
+    const hasPermission = allowedRoles.some(role => userRoles.includes(role));
+
+    if (!hasPermission) {
+      return res.status(403).send('Access Denied');
+    }
+
+    next();
+  };
+}
+```
+
+#### Usage in Routes:
+```javascript
+router.get('/admin-dashboard', authorizeRole('admin'), (req, res) => {
+  res.send('Welcome to the Admin Dashboard');
+});
+
+router.get('/doctor-dashboard', authorizeRole('doctor'), (req, res) => {
+  res.send('Welcome to the Doctor Dashboard');
+});
+```
+
+---
+
+### **5. Summary of Workflow**
+1. **Google Login**: Users log in via Google OAuth.
+2. **Role Assignment**: If the user is new, redirect them to a role selection form.
+3. **Role Storage**: Save the selected roles in the database.
+4. **Role-Based Access**: Protect routes using role-based middleware.
+
+This approach ensures that users can authenticate with Google, assign roles during registration, and access resources based on their roles.

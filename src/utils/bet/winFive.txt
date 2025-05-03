@@ -1,0 +1,590 @@
+To predict the winner in your **Bet9ja-style virtual sports app** for **virtual football** and **dog racing** using the **randomly generated odds** from your custom API, you need to implement a **Random Number Generator (RNG)**-based outcome simulation that aligns with the weighted odds. Since your app uses random odds (generated in `utils/oddsGenerator.js`) to simulate virtual football matches (20 teams) and dog races (8 dogs), predicting the winner involves assigning probabilities based on the odds and using an RNG to select the outcome. This approach mimics how Bet9ja determines winners in its Virtual Football League (VFL) and dog racing, where outcomes are random but weighted to favor participants with lower odds (e.g., favorites).
+
+Below, I’ll explain:
+1. How Bet9ja’s virtual sports determine winners using RNG.
+2. Why predicting winners in a random system is probabilistic, not deterministic.
+3. How to implement winner prediction in your app for football and dog racing, integrating with your existing **Express.js**, **MongoDB**, and **React Native** setup.
+4. How to update the backend to simulate match/race outcomes and display results in the frontend.
+5. How to ensure fairness and align with your requirements (real-time odds, payment processing, in-game betting).
+
+I’ll provide new code artifacts to extend your existing implementation, ensuring winners are predicted randomly but weighted by odds, and results are shown to users.
+
+---
+
+### **Understanding Winner Prediction in Bet9ja’s Virtual Sports**
+
+**Bet9ja’s Approach**:
+- **Virtual Football**: Each match (e.g., Lions vs. Eagles) has 1X2 odds (Team 1 win, Draw, Team 2 win). Outcomes are determined by an RNG with probabilities inversely proportional to the odds. For example:
+  - Team 1: 2.0 odds → ~50% chance.
+  - Draw: 3.5 odds → ~28.6% chance.
+  - Team 2: 3.0 odds → ~33.3% chance.
+  - The RNG selects the outcome when the match “ends” (~3 minutes).
+- **Dog Racing**: Each dog (e.g., Dog 1 to Dog 8) has win odds (e.g., Dog 1: 2.0, Dog 8: 12.0). The RNG assigns higher probabilities to dogs with lower odds. For example:
+  - Dog 1: 2.0 odds → ~50% chance.
+  - Dog 8: 12.0 odds → ~8.3% chance.
+- **RNG Fairness**: Bet9ja uses a certified RNG to ensure outcomes are random and unbiased, meeting regulatory standards (e.g., Nigerian Lottery Commission).
+
+**Key Points**:
+- **Weighted Probabilities**: Lower odds mean a higher probability of winning, but randomness ensures unpredictability.
+- **Simulation**: Outcomes are generated at the end of each event (match or race), not pre-determined.
+- **Transparency**: Results are displayed to users (e.g., “Lions 2-1 Eagles” or “Dog 1 wins”), with bets settled based on the outcome.
+
+**Your App**:
+- Your odds are generated randomly in `utils/oddsGenerator.js` with weighted probabilities (e.g., football favorites at 1.5–3.0, dogs at 2.0–10.0).
+- To predict winners, you’ll convert odds to probabilities, use an RNG to select the outcome, and store/display the result.
+- This must integrate with your existing features: real-time odds, Stripe payments, and in-game betting.
+
+**Why Not Deterministic Prediction?**:
+- Since outcomes are random, you can’t predict the exact winner in advance (e.g., “Lions will win”). Instead, you assign probabilities (e.g., Lions have a 50% chance) and let the RNG decide at the event’s end.
+- This ensures fairness and mimics Bet9ja’s model, where no one (including the app) knows the outcome until the RNG runs.
+
+---
+
+### **Implementation: Predicting Winners with Random Odds**
+
+I’ll extend your existing backend (`routes/events.js`, `models/Event.js`) and frontend (`screens/*`) to:
+1. Calculate win probabilities from odds.
+2. Use an RNG to select winners for football matches and dog races.
+3. Store and display results (e.g., “Lions win” or “Dog 1 wins”).
+4. Settle bets based on outcomes, updating user balances via Stripe.
+5. Support in-game betting with dynamic odds updates.
+
+#### **Step-by-Step Implementation**
+
+##### **1. Backend (Express.js + MongoDB)**
+
+The backend will:
+- Convert odds to probabilities.
+- Simulate match/race outcomes using an RNG.
+- Store results in the `Event` model.
+- Settle bets and update user balances.
+
+###### **Update Event Model**
+- Add a `result` field to store the winner (e.g., “Lions”, “Draw”, “Dog 1”).
+- Add a `score` field for football matches (e.g., “2-1”) for realism.
+
+```javascript
+const mongoose = require('mongoose');
+
+const eventSchema = new mongoose.Schema({
+  type: { type: String, enum: ['football', 'dog_race'], required: true },
+  sport: { type: String, required: true },
+  participants: [{ name: String, odds: Number }],
+  date: { type: Date, required: true },
+  status: { type: String, enum: ['upcoming', 'in-play', 'finished'], default: 'upcoming' },
+  result: { type: String }, // e.g., "Lions", "Draw", "Dog 1"
+  score: { type: String }, // e.g., "2-1" (football only)
+});
+
+module.exports = mongoose.model('Event', eventSchema);
+```
+
+###### **Update Odds Generator**
+- Add a function to convert odds to probabilities and select a winner.
+- Generate random scores for football matches.
+
+```javascript
+const generateFootballOdds = () => {
+  const favorite = (1.5 + Math.random() * 1.5).toFixed(2); // 1.5–3.0
+  const draw = (3.0 + Math.random() * 1.5).toFixed(2); // 3.0–4.5
+  const underdog = (2.5 + Math.random() * 2.5).toFixed(2); // 2.5–5.0
+  return [
+    { name: 'win1', odds: parseFloat(favorite) },
+    { name: 'draw', odds: parseFloat(draw) },
+    { name: 'win2', odds: parseFloat(underdog) },
+  ];
+};
+
+const generateDogRaceOdds = () => {
+  const dogs = [];
+  for (let i = 1; i <= 8; i++) {
+    const odds = (i === 1 ? 2.0 : i === 2 ? 3.0 : 4.0 + (i - 2) * 1.5).toFixed(2);
+    dogs.push({ name: `Dog ${i}`, odds: parseFloat(odds) });
+  }
+  return dogs;
+};
+
+// Convert odds to probabilities and select winner
+const selectWinner = (participants) => {
+  // Convert odds to implied probabilities (1/odds)
+  const totalInverseOdds = participants.reduce((sum, p) => sum + 1 / p.odds, 0);
+  const probabilities = participants.map(p => (1 / p.odds) / totalInverseOdds);
+
+  // RNG: Generate random number between 0 and 1
+  const random = Math.random();
+  let cumulative = 0;
+  for (let i = 0; i < probabilities.length; i++) {
+    cumulative += probabilities[i];
+    if (random <= cumulative) {
+      return participants[i].name;
+    }
+  }
+  return participants[participants.length - 1].name; // Fallback
+};
+
+// Generate random football score based on winner
+const generateFootballScore = (winner, team1, team2) => {
+  if (winner === 'draw') {
+    const score = Math.floor(Math.random() * 3); // 0-0, 1-1, 2-2
+    return `${score}-${score}`;
+  }
+  const winningScore = Math.floor(Math.random() * 3) + 1; // 1–3
+  const losingScore = Math.floor(Math.random() * winningScore); // 0–(winningScore-1)
+  return winner === team1 ? `${winningScore}-${losingScore}` : `${losingScore}-${winningScore}`;
+};
+
+module.exports = { generateFootballOdds, generateDogRaceOdds, selectWinner, generateFootballScore };
+```
+
+###### **Update Events Route**
+- Simulate outcomes when events finish (3 minutes after start).
+- Update odds for in-play events.
+
+```javascript
+const express = require('express');
+const Event = require('../models/Event');
+const { generateFootballOdds, generateDogRaceOdds, selectWinner, generateFootballScore } = require('../utils/oddsGenerator');
+const router = express.Router();
+
+const footballTeams = [
+  'Lions', 'Eagles', 'Tigers', 'Bears', 'Wolves', 'Hawks', 'Sharks', 'Panthers',
+  'Dragons', 'Cobras', 'Vipers', 'Falcons', 'Jaguars', 'Ravens', 'Bulls', 'Stallions',
+  'Knights', 'Pirates', 'Spartans', 'Giants',
+];
+
+// Generate or update events
+router.get('/', async (req, res) => {
+  try {
+    let events = await Event.find();
+    if (events.length === 0) {
+      // Seed initial events: 10 football matches, 2 dog races
+      const newEvents = [];
+      for (let i = 0; i < 10; i++) {
+        const team1 = footballTeams[i * 2];
+        const team2 = footballTeams[i * 2 + 1];
+        const odds = generateFootballOdds();
+        newEvents.push({
+          type: 'football',
+          sport: 'Virtual Football',
+          participants: [
+            { name: team1, odds: odds[0].odds },
+            { name: team2, odds: odds[2].odds },
+            { name: 'Draw', odds: odds[1].odds },
+          ],
+          date: new Date(Date.now() + i * 5 * 60 * 1000), // Every 5 minutes
+          status: 'upcoming',
+        });
+      }
+      for (let i = 0; i < 2; i++) {
+        newEvents.push({
+          type: 'dog_race',
+          sport: 'Virtual Dog Racing',
+          participants: generateDogRaceOdds(),
+          date: new Date(Date.now() + (i + 10) * 5 * 60 * 1000),
+          status: 'upcoming',
+        });
+      }
+      await Event.insertMany(newEvents);
+      events = newEvents;
+    } else {
+      // Update status, odds, and results
+      for (let event of events) {
+        if (event.status === 'upcoming' && event.date < new Date()) {
+          event.status = 'in-play';
+        }
+        if (event.status === 'in-play' && event.date < new Date(Date.now() - 3 * 60 * 1000)) {
+          event.status = 'finished';
+          event.result = selectWinner(event.participants);
+          if (event.type === 'football') {
+            event.score = generateFootballScore(event.result, event.participants[0].name, event.participants[1].name);
+          }
+        }
+        if (event.status !== 'finished') {
+          event.participants = event.type === 'football' ? generateFootballOdds() : generateDogRaceOdds();
+        }
+        await event.save();
+      }
+    }
+    res.json(events);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get in-play events
+router.get('/inplay', async (req, res) => {
+  try {
+    const events = await Event.find({ status: 'in-play' });
+    for (let event of events) {
+      event.participants = event.type === 'football' ? generateFootballOdds() : generateDogRaceOdds();
+      await event.save();
+    }
+    res.json(events);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+###### **Settle Bets**
+- Add a route to settle bets when events finish, paying out winning bets.
+- Update user balances based on odds.
+
+```javascript
+const express = require('express');
+const auth = require('../middleware/auth');
+const Bet = require('../models/Bet');
+const User = require('../models/User');
+const Event = require('../models/Event');
+const router = express.Router();
+
+// Place a bet
+router.post('/', auth, async (req, res) => {
+  const { eventId, amount, selection, type } = req.body;
+  try {
+    const user = await User.findById(req.user.userId);
+    if (user.balance < amount) return res.status(400).json({ msg: 'Insufficient balance' });
+
+    const event = await Event.findById(eventId);
+    if (!event) return res.status(400).json({ msg: 'Event not found' });
+    if (type === 'in-play' && event.status !== 'in-play') return res.status(400).json({ msg: 'Event not in-play' });
+    if (!event.participants.some(p => p.name === selection)) return res.status(400).json({ msg: 'Invalid selection' });
+
+    const bet = new Bet({
+      userId: req.user.userId,
+      eventId,
+      amount,
+      selection,
+      type: type || 'pre-match',
+    });
+    await bet.save();
+
+    user.balance -= amount;
+    await user.save();
+
+    res.json(bet);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get user bets
+router.get('/', auth, async (req, res) => {
+  try {
+    const bets = await Bet.find({ userId: req.user.userId }).populate('eventId');
+    res.json(bets);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Settle bets for finished events
+router.post('/settle', auth, async (req, res) => {
+  try {
+    const bets = await Bet.find({ userId: req.user.userId, status: 'pending' }).populate('eventId');
+    for (let bet of bets) {
+      if (bet.eventId.status === 'finished') {
+        if (bet.selection === bet.eventId.result) {
+          const odds = bet.eventId.participants.find(p => p.name === bet.selection).odds;
+          const payout = bet.amount * odds;
+          const user = await User.findById(bet.userId);
+          user.balance += payout;
+          await user.save();
+          bet.status = 'won';
+        } else {
+          bet.status = 'lost';
+        }
+        await bet.save();
+      }
+    }
+    res.json({ msg: 'Bets settled' });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+###### **Reuse Existing Routes**
+- Reuse `routes/payments.js`, `routes/auth.js`, `models/User.js`, `models/Transaction.js`, and `middleware/auth.js` from previous responses.
+- Ensure `server.js` includes all routes.
+
+---
+
+##### **2. Frontend (React Native)**
+
+The frontend will display event results and allow users to check settled bets.
+
+###### **Update Profile Screen**
+- Show bet history with results and payouts.
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { View, Text, FlatList, Button, StyleSheet } from 'react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function ProfileScreen() {
+  const [bets, setBets] = useState([]);
+  const [balance, setBalance] = useState(0);
+
+  const fetchData = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const betsRes = await axios.get('http://localhost:5000/api/bets', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setBets(betsRes.data);
+
+      const userRes = await axios.get('http://localhost:5000/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setBalance(userRes.data.balance);
+
+      // Settle bets
+      await axios.post('http://localhost:5000/api/bets/settle', {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      alert('Error fetching data');
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 30000); // Check every 30 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Profile</Text>
+      <Text style={styles.text}>{`Balance: $${balance.toFixed(2)}`}</Text>
+      <Text style={styles.subtitle}>Your Bets</Text>
+      <FlatList
+        data={bets}
+        keyExtractor={item => item._id}
+        renderItem={({ item }) => (
+          <View style={styles.bet}>
+            <Text style={styles.text}>
+              {item.eventId.type === 'football'
+                ? `${item.eventId.participants[0].name} vs ${item.eventId.participants[1].name}`
+                : 'Dog Race'}
+            </Text>
+            <Text style={styles.text}>{`Bet: $${item.amount} on ${item.selection}`}</Text>
+            <Text style={styles.text}>{`Status: ${item.status}`}</Text>
+            {item.eventId.result && (
+              <Text style={styles.text}>
+                {`Result: ${item.eventId.result}${item.eventId.score ? ` (${item.eventId.score})` : ''}`}
+              </Text>
+            )}
+          </View>
+        )}
+      />
+      <Button title="Refresh Bets" onPress={fetchData} color="#007bff" />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center', color: '#000' },
+  subtitle: { fontSize: 18, marginTop: 10, color: '#000' },
+  bet: { borderWidth: 1, borderColor: '#ccc', padding: 10, marginBottom: 10, borderRadius: 5 },
+  text: { fontSize: 14, color: '#000' },
+});
+```
+
+###### **Reuse Existing Screens**
+- Reuse `HomeScreen.js`, `InPlayScreen.js`, `BetSlipScreen.js`, `DepositScreen.js`, `EventCard.js`, and `AppNavigator.js` from the previous response.
+- Ensure `EventCard.js` displays the `result` and `score` fields when available.
+
+```javascript
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+
+export default function EventCard({ event, onBet }) {
+  return (
+    <TouchableOpacity onPress={onBet} style={styles.card}>
+      <Text style={styles.sport}>{event.sport}</Text>
+      <Text style={styles.participants}>
+        {event.type === 'football' ? `${event.participants[0].name} vs ${event.participants[1].name}` : 'Dog Race'}
+      </Text>
+      <View style={styles.oddsContainer}>
+        {event.participants.map((p, index) => (
+          <Text key={index} style={styles.odds}>{`${p.name}: ${p.odds}`}</Text>
+        ))}
+      </View>
+      <Text style={styles.status}>{event.status}</Text>
+      {event.result && (
+        <Text style={styles.result}>
+          {`Result: ${event.result}${event.score ? ` (${event.score})` : ''}`}
+        </Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: { padding: 10, marginVertical: 5, borderWidth: 1, borderColor: '#ccc', borderRadius: 5 },
+  sport: { fontSize: 16, fontWeight: 'bold', color: '#000' },
+  participants: { fontSize: 14, color: '#000' },
+  oddsContainer: { flexDirection: 'row', flexWrap: 'wrap', marginVertical: 5 },
+  odds: { fontSize: 12, marginRight: 10, color: '#000' },
+  status: { fontSize: 12, color: '#007bff' },
+  result: { fontSize: 12, color: '#28a745', fontWeight: 'bold' },
+});
+```
+
+---
+
+##### **3. How Winner Prediction Works**
+
+- **Football Matches**:
+  - **Odds**: Generated in `generateFootballOdds` (e.g., Team 1: 2.0, Draw: 3.5, Team 2: 3.0).
+  - **Probabilities**: `selectWinner` converts odds to probabilities (e.g., 50%, 28.6%, 33.3%).
+  - **RNG**: A random number (0–1) selects the outcome based on cumulative probabilities.
+  - **Score**: If Team 1 or Team 2 wins, `generateFootballScore` assigns a random score (e.g., 2-1); if Draw, a score like 1-1.
+  - **Example**: Lions (2.0) vs. Eagles (3.0), Draw (3.5). RNG selects “Lions” with ~50% chance, score: “2-1”.
+
+- **Dog Races**:
+  - **Odds**: Generated in `generateDogRaceOdds` (e.g., Dog 1: 2.0, Dog 2: 3.0, ..., Dog 8: 10.0).
+  - **Probabilities**: `selectWinner` assigns higher chances to lower odds (e.g., Dog 1: ~50%, Dog 8: ~10%).
+  - **RNG**: Selects one dog as the winner.
+  - **Example**: Dog 1 (2.0) has a ~50% chance of winning; RNG selects “Dog 1”.
+
+- **Timing**:
+  - Matches/races start every 5 minutes (`date` field).
+  - In-play lasts ~3 minutes, after which the RNG determines the winner.
+  - Results are stored in `result` and `score` (football only).
+
+- **Bet Settlement**:
+  - The `/api/bets/settle` endpoint checks finished events.
+  - If the bet’s `selection` matches the event’s `result`, the user wins `amount * odds`.
+  - Balance is updated, and bet status changes to “won” or “lost”.
+
+---
+
+##### **4. Addressing Your Requirements**
+
+- **Predicting Winners**:
+  - Winners are determined randomly using weighted probabilities, mimicking Bet9ja’s RNG-based outcomes.
+  - Results are fair and unpredictable, with favorites (lower odds) winning more often.
+- **Virtual Football and Dog Racing**:
+  - Supports 20 football teams (10 matches) and 8 dogs per race.
+  - Matches/races every 5 minutes, with 3-minute duration.
+- **Real-Time Odds**:
+  - Odds update every 10 seconds for in-play events, 30 seconds for pre-match, via polling.
+- **Payment Processing**:
+  - Stripe handles real deposits/withdrawals, with balance updates for payouts.
+- **In-Game Betting**:
+  - Users can bet on in-play matches/races, with dynamic odds.
+- **UI**:
+  - Simple white background, blue buttons, showing odds, results, and scores.
+
+---
+
+##### **5. Testing and Validation**
+
+- **Backend**:
+  - Test `/api/events`: Verify football matches and dog races appear with random odds.
+  - Test `/api/events/inplay`: Ensure in-play events update odds every 10 seconds.
+  - Test `/api/bets`: Place bets (e.g., “Lions” to win, “Dog 1” to win).
+  - Test `/api/bets/settle`: After 3 minutes, check bets are settled, and balance updates for winners.
+  - Use Postman to simulate events finishing (modify `date` in MongoDB to past time).
+
+- **Frontend**:
+  - Login/register, deposit via Stripe (test card: 4242 4242 4242 4242).
+  - View events on Home/In-Play screens, place bets.
+  - Check Profile screen for bet status, results (e.g., “Lions win (2-1)”), and updated balance.
+  - Verify odds refresh and results appear after ~3 minutes.
+
+- **Tools**:
+  - Postman for API testing.
+  - Expo’s debugger or Chrome DevTools for frontend issues.
+  - MongoDB Atlas to inspect `Event` and `Bet` collections.
+
+---
+
+##### **6. Fairness and Compliance**
+
+- **RNG Fairness**:
+  - The `selectWinner` function uses `Math.random()`, which is sufficient for a demo but not cryptographically secure.
+  - For production, use a certified RNG (e.g., Node.js `crypto` module or a GLI-certified provider like GammaStack, ~$1,000).
+- **Regulatory Compliance**:
+  - Real-money betting requires a gambling license (e.g., Nigerian Lottery Commission, NJDGE).
+  - Certify the RNG and audit odds for fairness.
+  - Implement KYC (e.g., Stripe Identity) and geolocation (e.g., Expo Location or GeoComply).
+- **Responsible Gambling**:
+  - Add deposit limits, self-exclusion, and links to support (e.g., 1-800-522-4700 or Nigerian GamCare).
+
+---
+
+##### **7. Costs and Timeline**
+
+- **Costs**:
+  - **Stripe**: 2.9% + $0.30 per transaction.
+  - **MongoDB Atlas**: Free tier (512MB) for MVP.
+  - **Hosting (Heroku/AWS)**: $50–$200/month for production.
+  - **Total**: ~$50/month + transaction fees.
+- **Timeline**: 2–3 weeks (assuming prior code is in place).
+  - Backend (winner logic, settlement): 4–5 days.
+  - Frontend (results display): 3–4 days.
+  - Testing: 2–3 days.
+- **Effort**: ~30–40 hours.
+
+---
+
+##### **8. Setup Instructions**
+
+1. **Prerequisites**:
+   - Node.js, npm, Expo CLI, MongoDB Atlas.
+   - Stripe account with API keys.
+   - Postman, Expo Go.
+
+2. **Backend**:
+   - Clone the project.
+   - Install dependencies: `npm install express mongoose bcryptjs jsonwebtoken dotenv cors stripe`.
+   - Copy updated files: `server.js`, `routes/events.js`, `routes/bets.js`, `models/Event.js`, `utils/oddsGenerator.js`, and reuse others.
+   - Run: `node server.js`.
+
+3. **Frontend**:
+   - Reuse React Native project.
+   - Copy updated files: `screens/ProfileScreen.js`, `components/EventCard.js`, and reuse others.
+   - Run: `expo start`.
+
+4. **Testing**:
+   - Verify events show results after ~3 minutes.
+   - Place bets, check settlements, and confirm balance updates.
+   - Test error cases (e.g., insufficient balance, invalid selection).
+
+---
+
+##### **9. Enhancing the Bet9ja Experience**
+
+- **Visuals**: Add `react-native-video` for match/race animations ($500–$2,000 for assets).
+- **Markets**: Extend `oddsGenerator.js` for over/under or correct score bets.
+- **RNG Certification**: Use a secure RNG for compliance (~$1,000).
+- **WebSockets**: Implement Socket.IO for real-time results ($50–$100/month on AWS).
+- **Geolocation**: Add Expo Location or GeoComply for production.
+
+---
+
+##### **10. Responsible Gambling**
+
+This app uses random outcomes and real payments for demo purposes. For production, secure a license, certify the RNG, and include responsible gambling tools. Contact the National Problem Gambling Helpline (1-800-522-4700) or local Nigerian support.
+
+---
+
+##### **Conclusion**
+
+To predict winners in your virtual football and dog racing app:
+- Use the `selectWinner` function to randomly select outcomes based on odds-derived probabilities.
+- Store results in the `Event` model (`result`, `score`) and display them in the frontend.
+- Settle bets via `/api/bets/settle`, paying out winners using Stripe-updated balances.
+- The implementation integrates with your Express.js, MongoDB, and React Native stack, supporting real-time odds, payments, and in-game betting.
+
+This mimics Bet9ja’s RNG-based virtual sports, with 20 football teams and 8 dogs. For production, certify the RNG and add visuals. If you need help with visuals, additional markets, or compliance (e.g., Nigeria), let me know! Specify your region or desired enhancements for further customization.

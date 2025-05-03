@@ -1,0 +1,156 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const { ethers } = require('ethers');
+const { Connection, PublicKey } = require('@solana/web3.js');
+const { create } = require('ipfs-http-client');
+const cors = require('cors');
+const crypto = require('crypto');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// MongoDB Connection
+mongoose.connect('mongodb://localhost:27017/web3_email_calendar', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+// IPFS Client
+const ipfs = create({ url: 'http://localhost:5001' }); // Assumes local IPFS node
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  walletAddress: { type: String, required: true, unique: true },
+  username: { type: String, unique: true },
+  chain: { type: String, enum: ['ethereum', 'polygon', 'solana'] },
+});
+const User = mongoose.model('User', userSchema);
+
+// Email Schema
+const emailSchema = new mongoose.Schema({
+  senderWallet: String,
+  recipientWallet: String,
+  subject: String,
+  bodyCid: String, // IPFS CID for email body
+  timestamp: { type: Date, default: Date.now },
+});
+const Email = mongoose.model('Email', emailSchema);
+
+// Event Schema
+const eventSchema = new mongoose.Schema({
+  userWallet: String,
+  title: String,
+  start: Date,
+  end: Date,
+  cid: String, // IPFS CID for event details
+});
+const Event = mongoose.model('Event', eventSchema);
+
+// Generate Short Username
+const generateUsername = async () => {
+  let username;
+  do {
+    username = crypto.randomBytes(3).toString('hex'); // e.g., "a1b2c3"
+  } while (await User.findOne({ username }));
+  return username;
+};
+
+// Verify Ethereum/Polygon Signature
+const verifyEthSignature = async (walletAddress, signature, message) => {
+  const signer = ethers.utils.verifyMessage(message, signature);
+  return signer.toLowerCase() === walletAddress.toLowerCase();
+};
+
+// Verify Solana Signature
+const verifySolanaSignature = async (walletAddress, signature, message) => {
+  const connection = new Connection('https://api.devnet.solana.com');
+  const publicKey = new PublicKey(walletAddress);
+  const encodedMessage = new TextEncoder().encode(message);
+  return nacl.sign.detached.verify(encodedMessage, Buffer.from(signature, 'hex'), publicKey.toBuffer());
+};
+
+// User Routes
+app.post('/api/users/register', async (req, res) => {
+  const { walletAddress, signature, chain } = req.body;
+  const message = 'Sign to register with Web3 Email';
+  
+  let isValid;
+  if (chain === 'solana') {
+    isValid = await verifySolanaSignature(walletAddress, signature, message);
+  } else {
+    isValid = await verifyEthSignature(walletAddress, signature, message);
+  }
+
+  if (!isValid) return res.status(401).json({ message: 'Invalid signature' });
+
+  try {
+    let user = await User.findOne({ walletAddress });
+    if (!user) {
+      const username = await generateUsername();
+      user = new User({ walletAddress, username, chain });
+      await user.save();
+    }
+    res.json({ username: user.username });
+  } catch (error) {
+    res.status(400).json({ message: 'Error registering user' });
+  }
+});
+
+app.post('/api/users/username', async (req, res) => {
+  const { walletAddress, newUsername } = req.body;
+  if (await User.findOne({ username: newUsername })) {
+    return res.status(400).json({ message: 'Username taken' });
+  }
+  await User.updateOne({ walletAddress }, { username: newUsername });
+  res.json({ message: 'Username updated' });
+});
+
+// Email Routes
+app.post('/api/emails', async (req, res) => {
+  const { senderWallet, recipientUsername, subject, body } = req.body;
+  const recipient = await User.findOne({ username: recipientUsername });
+  if (!recipient) return res.status(404).json({ message: 'Recipient not found' });
+
+  const { cid } = await ipfs.add(body); // Store body on IPFS
+  const email = new Email({
+    senderWallet,
+    recipientWallet: recipient.walletAddress,
+    subject,
+    bodyCid: cid.toString(),
+  });
+  await email.save();
+  res.status(201).json({ message: 'Email sent' });
+});
+
+app.get('/api/emails', async (req, res) => {
+  const { walletAddress } = req.query;
+  const emails = await Email.find({
+    $or: [{ senderWallet: walletAddress }, { recipientWallet: walletAddress }],
+  });
+  res.json(emails);
+});
+
+// Calendar Routes
+app.post('/api/events', async (req, res) => {
+  const { walletAddress, title, start, end } = req.body;
+  const eventData = JSON.stringify({ title, start, end });
+  const { cid } = await ipfs.add(eventData);
+  const event = new Event({
+    userWallet: walletAddress,
+    title,
+    start,
+    end,
+    cid: cid.toString(),
+  });
+  await event.save();
+  res.status(201).json({ message: 'Event created' });
+});
+
+app.get('/api/events', async (req, res) => {
+  const { walletAddress } = req.query;
+  const events = await Event.find({ userWallet: walletAddress });
+  res.json(events);
+});
+
+app.listen(5000, () => console.log('Server running on port 5000'));

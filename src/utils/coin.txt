@@ -1,0 +1,24 @@
+soliditypragma solidity ^0.8.0;
+import "https://github.com/OpenZeppelin/openzeppelin-solidity/contracts/token/BEP20/SafeBEP20.sol";
+contract FollyToken {    string public name = "Folly";    string public symbol = "FOLLY";    uint8 public decimals = 18;    uint256 public totalSupply = 30000000 * 10**18; // 30 million tokens with 18 decimal places
+    mapping(address => uint256) public balanceOf;    mapping(address => mapping(address => uint256)) public allowance;
+    event Transfer(address indexed from, address indexed to, uint256 value);    event Approval(address indexed owner, address indexed spender, uint256 value);
+    constructor() public {        balanceOf[msg.sender] = totalSupply;    }
+    function transfer(address _to, uint256 _value) public returns (bool success) {        require(balanceOf[msg.sender] >= _value);        balanceOf[msg.sender] -= _value;        balanceOf[_to] += _value;        emit Transfer(msg.sender, _to, _value);        return true;    }
+    function approve(address _spender, uint256 _value) public returns (bool success) {        allowance[msg.sender][_spender] = _value;        emit Approval(msg.sender, _spender, _value);        return true;    }
+    function transferFrom(address _from, address _to, uint256 _value) public returns (bool success) {        require(balanceOf[_from] >= _value);        require(allowance[_from][msg.sender] >= _value);        balanceOf[_from] -= _value;        balanceOf[_to] += _value;        allowance[_from][msg.sender] -= _value;        emit Transfer(_from, _to, _value);        return true;    }}
+```bashnpm install ethers```
+Step 2: Create a contract instanceNext, create a contract instance using the Ethers.js library:
+```import { ethers } from 'ethers';
+const contractAddress = 'YOUR_CONTRACT_ADDRESS';const contractAbi = [  // Your contract ABI here];
+const provider = new ethers.providers.Web3Provider(window.ethereum);const signer = provider.getSigner();const contract = new ethers.Contract(contractAddress, contractAbi, signer);```
+Step 3: Interact with the contractNow you can interact with the contract using the `contract` instance:
+```// Get the token balancecontract.balanceOf('YOUR_WALLET_ADDRESS')  .then(balance => console.log(balance));
+// Send tokenscontract.transfer('RECIPIENT_WALLET_ADDRESS', ethers.utils.parseEther('1'))  .then(tx => console.log(tx));```
+Step 4: Integrate with ReactTo integrate the contract with your React app, you can use the `useState` and `useEffect` hooks:
+```import React, { useState, useEffect } from 'react';import { ethers } from 'ethers';
+function App() {  const [balance, setBalance] = useState(0);  const [contract, setContract] = useState(null);
+  useEffect(() => {    const provider = new ethers.providers.Web3Provider(window.ethereum);    const signer = provider.getSigner();    const contractInstance = new ethers.Contract(contractAddress, contractAbi, signer);    setContract(contractInstance);
+    contractInstance.balanceOf('YOUR_WALLET_ADDRESS')      .then(balance => setBalance(balance));  }, []);
+  const handleSendTokens = async () => {    if (contract) {      const tx = await contract.transfer('RECIPIENT_WALLET_ADDRESS', ethers.utils.parseEther('1'));      console.log(tx);    }  };
+  return (    <div>      <p>Balance: {balance.toString()}</p>      <button onClick={handleSendTokens}>Send Tokens</button>    </div>  );}```

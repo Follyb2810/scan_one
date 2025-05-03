@@ -1,0 +1,2133 @@
+I'll build a TikTok clone solution from backend to frontend, including authentication with social login capabilities. Let's break this down into comprehensive components based on your requirements.
+
+# TikTok Clone: Full-Stack Implementation
+
+Let's start by setting up the project structure and implementing the key components one by one.
+
+## Backend Implementation
+
+First, I'll create the Express.js backend with MongoDB integration and authentication:
+
+```javascript
+// server.js - Main server file
+
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const path = require('path');
+const passport = require('passport');
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+require('dotenv').config();
+
+// Import Routes
+const authRoutes = require('./routes/auth.routes');
+const userRoutes = require('./routes/user.routes');
+const videoRoutes = require('./routes/video.routes');
+const chatRoutes = require('./routes/chat.routes');
+const notificationRoutes = require('./routes/notification.routes');
+const giftRoutes = require('./routes/gift.routes');
+
+// Initialize Express app
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Middleware
+app.use(cors());
+app.use(helmet());
+app.use(morgan('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Session configuration
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'tiktok_clone_secret',
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({ 
+      mongoUrl: process.env.MONGODB_URI 
+    }),
+    cookie: {
+      maxAge: 1000 * 60 * 60 * 24 // 1 day
+    }
+  })
+);
+
+// Initialize Passport
+app.use(passport.initialize());
+app.use(passport.session());
+require('./config/passport.config');
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/videos', videoRoutes);
+app.use('/api/chats', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/gifts', giftRoutes);
+
+// Static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Socket.io setup for real-time features
+const server = require('http').createServer(app);
+const io = require('socket.io')(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
+// Socket.io connection
+require('./socket/socket.js')(io);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    success: false,
+    message: 'Internal Server Error',
+    error: process.env.NODE_ENV === 'development' ? err.message : {}
+  });
+});
+
+// Start the server
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+module.exports = app;
+
+```
+
+Now, let's set up the authentication system with Passport.js for social login:
+
+```javascript
+// config/passport.config.js
+
+const passport = require('passport');
+const LocalStrategy = require('passport-local').Strategy;
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const FacebookStrategy = require('passport-facebook').Strategy;
+const User = require('../models/user.model');
+const bcrypt = require('bcryptjs');
+
+// Serialize and Deserialize User
+passport.serializeUser((user, done) => {
+  done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
+  } catch (err) {
+    done(err, null);
+  }
+});
+
+// Local Strategy
+passport.use(
+  new LocalStrategy(
+    {
+      usernameField: 'email',
+      passwordField: 'password'
+    },
+    async (email, password, done) => {
+      try {
+        // Find user by email
+        const user = await User.findOne({ email });
+        
+        // Check if user exists
+        if (!user) {
+          return done(null, false, { message: 'User not found' });
+        }
+        
+        // Validate password
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return done(null, false, { message: 'Incorrect password' });
+        }
+        
+        // Return user if authentication is successful
+        return done(null, user);
+      } catch (err) {
+        return done(err);
+      }
+    }
+  )
+);
+
+// Google OAuth Strategy
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: '/api/auth/google/callback',
+      scope: ['profile', 'email']
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        // Check if user already exists
+        const existingUser = await User.findOne({ 'google.id': profile.id });
+        
+        if (existingUser) {
+          return done(null, existingUser);
+        }
+        
+        // Check if user exists with the same email
+        const userWithEmail = await User.findOne({ email: profile.emails[0].value });
+        
+        if (userWithEmail) {
+          // Link Google account to existing user
+          userWithEmail.google = {
+            id: profile.id,
+            email: profile.emails[0].value,
+            name: profile.displayName
+          };
+          await userWithEmail.save();
+          return done(null, userWithEmail);
+        }
+        
+        // Create a new user if it doesn't exist
+        const newUser = new User({
+          email: profile.emails[0].value,
+          username: profile.displayName.replace(/\s+/g, '').toLowerCase() + Math.floor(Math.random() * 1000),
+          fullName: profile.displayName,
+          profilePicture: profile.photos[0].value,
+          google: {
+            id: profile.id,
+            email: profile.emails[0].value,
+            name: profile.displayName
+          },
+          isVerified: true
+        });
+        
+        await newUser.save();
+        return done(null, newUser);
+      } catch (err) {
+        return done(err, null);
+      }
+    }
+  )
+);
+
+// Facebook OAuth Strategy
+passport.use(
+  new FacebookStrategy(
+    {
+      clientID: process.env.FACEBOOK_APP_ID,
+      clientSecret: process.env.FACEBOOK_APP_SECRET,
+      callbackURL: '/api/auth/facebook/callback',
+      profileFields: ['id', 'emails', 'name', 'picture.type(large)']
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        // Check if user already exists
+        const existingUser = await User.findOne({ 'facebook.id': profile.id });
+        
+        if (existingUser) {
+          return done(null, existingUser);
+        }
+        
+        // Check if email exists
+        if (profile.emails && profile.emails.length > 0) {
+          const userWithEmail = await User.findOne({ email: profile.emails[0].value });
+          
+          if (userWithEmail) {
+            // Link Facebook account to existing user
+            userWithEmail.facebook = {
+              id: profile.id,
+              email: profile.emails[0].value,
+              name: `${profile.name.givenName} ${profile.name.familyName}`
+            };
+            await userWithEmail.save();
+            return done(null, userWithEmail);
+          }
+        }
+        
+        // Create a new user
+        const newUser = new User({
+          email: profile.emails ? profile.emails[0].value : `${profile.id}@facebook.com`,
+          username: `fb_${profile.id.substring(0, 8)}${Math.floor(Math.random() * 1000)}`,
+          fullName: `${profile.name.givenName} ${profile.name.familyName}`,
+          profilePicture: profile.photos ? profile.photos[0].value : '',
+          facebook: {
+            id: profile.id,
+            email: profile.emails ? profile.emails[0].value : null,
+            name: `${profile.name.givenName} ${profile.name.familyName}`
+          },
+          isVerified: true
+        });
+        
+        await newUser.save();
+        return done(null, newUser);
+      } catch (err) {
+        return done(err, null);
+      }
+    }
+  )
+);
+
+module.exports = passport;
+
+```
+
+Let's implement the database models for our application:
+
+```javascript
+// models/user.model.js
+
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const userSchema = new mongoose.Schema({
+  username: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    minlength: 3,
+    maxlength: 30
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true
+  },
+  password: {
+    type: String,
+    minlength: 6
+  },
+  fullName: {
+    type: String,
+    required: true
+  },
+  bio: {
+    type: String,
+    default: '',
+    maxlength: 160
+  },
+  profilePicture: {
+    type: String,
+    default: ''
+  },
+  followers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  following: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  videos: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Video'
+  }],
+  likes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Video'
+  }],
+  coins: {
+    type: Number,
+    default: 0
+  },
+  isVerified: {
+    type: Boolean,
+    default: false
+  },
+  google: {
+    id: String,
+    email: String,
+    name: String
+  },
+  facebook: {
+    id: String,
+    email: String,
+    name: String
+  },
+  resetPasswordToken: String,
+  resetPasswordExpires: Date
+}, {
+  timestamps: true
+});
+
+// Hash password before saving
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password') || !this.password) return next();
+  
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Video Model
+const videoSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  videoUrl: {
+    type: String,
+    required: true
+  },
+  thumbnail: {
+    type: String,
+    required: true
+  },
+  description: {
+    type: String,
+    default: '',
+    maxlength: 2200
+  },
+  song: {
+    type: String,
+    default: 'Original Sound'
+  },
+  tags: [{
+    type: String
+  }],
+  likes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  comments: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Comment'
+  }],
+  shares: {
+    type: Number,
+    default: 0
+  },
+  views: {
+    type: Number,
+    default: 0
+  }
+}, {
+  timestamps: true
+});
+
+// Comment Model
+const commentSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  video: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Video',
+    required: true
+  },
+  text: {
+    type: String,
+    required: true,
+    maxlength: 300
+  },
+  likes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  replies: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Comment'
+  }],
+  parentComment: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Comment'
+  }
+}, {
+  timestamps: true
+});
+
+// Chat Model
+const chatSchema = new mongoose.Schema({
+  participants: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  }],
+  messages: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message'
+  }],
+  latestMessage: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message'
+  },
+  isApproved: {
+    type: Boolean,
+    default: false
+  }
+}, {
+  timestamps: true
+});
+
+// Message Model
+const messageSchema = new mongoose.Schema({
+  sender: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  chat: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Chat',
+    required: true
+  },
+  content: {
+    type: String,
+    required: true
+  },
+  isRead: {
+    type: Boolean,
+    default: false
+  },
+  gift: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Gift'
+  }
+}, {
+  timestamps: true
+});
+
+// Notification Model
+const notificationSchema = new mongoose.Schema({
+  recipient: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  sender: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  type: {
+    type: String,
+    enum: ['like', 'comment', 'follow', 'mention', 'gift', 'message_request'],
+    required: true
+  },
+  video: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Video'
+  },
+  comment: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Comment'
+  },
+  chat: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Chat'
+  },
+  message: {
+    type: String
+  },
+  isRead: {
+    type: Boolean,
+    default: false
+  }
+}, {
+  timestamps: true
+});
+
+// Gift Model
+const giftSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true
+  },
+  description: {
+    type: String
+  },
+  imageUrl: {
+    type: String,
+    required: true
+  },
+  coinValue: {
+    type: Number,
+    required: true
+  },
+  category: {
+    type: String,
+    enum: ['basic', 'premium', 'special', 'limited'],
+    default: 'basic'
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+}, {
+  timestamps: true
+});
+
+// Gift Transaction Model
+const giftTransactionSchema = new mongoose.Schema({
+  sender: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  recipient: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  gift: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Gift',
+    required: true
+  },
+  video: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Video'
+  },
+  message: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Message'
+  },
+  coinAmount: {
+    type: Number,
+    required: true
+  }
+}, {
+  timestamps: true
+});
+
+// Coin Transaction Model
+const coinTransactionSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  amount: {
+    type: Number,
+    required: true
+  },
+  type: {
+    type: String,
+    enum: ['purchase', 'gift_sent', 'gift_received', 'refund', 'bonus'],
+    required: true
+  },
+  reference: {
+    type: String
+  },
+  paymentId: {
+    type: String
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'completed', 'failed'],
+    default: 'completed'
+  }
+}, {
+  timestamps: true
+});
+
+// Export all models
+const User = mongoose.model('User', userSchema);
+const Video = mongoose.model('Video', videoSchema);
+const Comment = mongoose.model('Comment', commentSchema);
+const Chat = mongoose.model('Chat', chatSchema);
+const Message = mongoose.model('Message', messageSchema);
+const Notification = mongoose.model('Notification', notificationSchema);
+const Gift = mongoose.model('Gift', giftSchema);
+const GiftTransaction = mongoose.model('GiftTransaction', giftTransactionSchema);
+const CoinTransaction = mongoose.model('CoinTransaction', coinTransactionSchema);
+
+module.exports = {
+  User,
+  Video,
+  Comment,
+  Chat,
+  Message,
+  Notification,
+  Gift,
+  GiftTransaction,
+  CoinTransaction
+};
+
+```
+
+Now, let's implement the authentication routes:
+
+```javascript
+// routes/auth.routes.js
+
+const express = require('express');
+const router = express.Router();
+const passport = require('passport');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
+const { User } = require('../models/user.model');
+const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/email.util');
+const { isAuthenticated } = require('../middleware/auth.middleware');
+
+// Register a new user
+router.post('/register', async (req, res) => {
+  try {
+    const { username, email, password, fullName } = req.body;
+
+    // Check if user already exists
+    const userExists = await User.findOne({ 
+      $or: [{ email }, { username }] 
+    });
+
+    if (userExists) {
+      return res.status(400).json({ 
+        success: false, 
+        message: userExists.email === email 
+          ? 'Email already in use' 
+          : 'Username already taken' 
+      });
+    }
+
+    // Create verification token
+    const verificationToken = uuidv4();
+
+    // Create a new user
+    const newUser = new User({
+      username,
+      email,
+      password,
+      fullName,
+      resetPasswordToken: verificationToken,
+      resetPasswordExpires: Date.now() + 3600000 // 1 hour
+    });
+
+    await newUser.save();
+
+    // Send verification email
+    await sendVerificationEmail(email, verificationToken);
+
+    // Create JWT token
+    const token = jwt.sign(
+      { id: newUser._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully. Please check your email to verify your account.',
+      token,
+      user: {
+        id: newUser._id,
+        username: newUser.username,
+        email: newUser.email,
+        fullName: newUser.fullName,
+        profilePicture: newUser.profilePicture,
+        isVerified: newUser.isVerified
+      }
+    });
+  } catch (err) {
+    console.error('Registration error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Registration failed',
+      error: err.message
+    });
+  }
+});
+
+// Verify email
+router.get('/verify-email/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification token'
+      });
+    }
+
+    // Update user verification status
+    user.isVerified = true;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Email verified successfully. You can now login.'
+    });
+  } catch (err) {
+    console.error('Email verification error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Email verification failed',
+      error: err.message
+    });
+  }
+});
+
+// Login with email and password
+router.post('/login', (req, res, next) => {
+  passport.authenticate('local', { session: false }, (err, user, info) => {
+    if (err) {
+      return res.status(500).json({
+        success: false,
+        message: 'Authentication error',
+        error: err.message
+      });
+    }
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: info.message || 'Authentication failed'
+      });
+    }
+
+    // Create JWT token
+    const token = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        fullName: user.fullName,
+        profilePicture: user.profilePicture,
+        isVerified: user.isVerified
+      }
+    });
+  })(req, res, next);
+});
+
+// Google OAuth login route
+router.get('/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] })
+);
+
+// Google OAuth callback route
+router.get('/google/callback',
+  passport.authenticate('google', { failureRedirect: '/login', session: false }),
+  (req, res) => {
+    // Create JWT token
+    const token = jwt.sign(
+      { id: req.user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    // Redirect to frontend with token
+    res.redirect(`${process.env.CLIENT_URL}/auth/social-login?token=${token}`);
+  }
+);
+
+// Facebook OAuth login route
+router.get('/facebook',
+  passport.authenticate('facebook', { scope: ['email'] })
+);
+
+// Facebook OAuth callback route
+router.get('/facebook/callback',
+  passport.authenticate('facebook', { failureRedirect: '/login', session: false }),
+  (req, res) => {
+    // Create JWT token
+    const token = jwt.sign(
+      { id: req.user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    // Redirect to frontend with token
+    res.redirect(`${process.env.CLIENT_URL}/auth/social-login?token=${token}`);
+  }
+);
+
+// Forgot password
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Generate password reset token
+    const resetToken = uuidv4();
+    
+    // Set token expiration to 1 hour
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpires = Date.now() + 3600000; // 1 hour
+    await user.save();
+
+    // Send password reset email
+    await sendPasswordResetEmail(email, resetToken);
+
+    res.status(200).json({
+      success: true,
+      message: 'Password reset link has been sent to your email'
+    });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to process password reset request',
+      error: err.message
+    });
+  }
+});
+
+// Reset password
+router.post('/reset-password/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired password reset token'
+      });
+    }
+
+    // Update password
+    user.password = password;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password has been reset successfully'
+    });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reset password',
+      error: err.message
+    });
+  }
+});
+
+// Change password (authenticated users)
+router.post('/change-password', isAuthenticated, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user._id;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to change password',
+      error: err.message
+    });
+  }
+});
+
+// Get current user
+router.get('/me', isAuthenticated, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select('-password -resetPasswordToken -resetPasswordExpires')
+      .populate('followers', 'username fullName profilePicture')
+      .populate('following', 'username fullName profilePicture');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      user
+    });
+  } catch (err) {
+    console.error('Get current user error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get user information',
+      error: err.message
+    });
+  }
+});
+
+// Logout
+router.post('/logout', (req, res) => {
+  req.logout();
+  res.status(200).json({
+    success: true,
+    message: 'Logout successful'
+  });
+});
+
+module.exports = router;
+
+```
+
+Now, let's implement the socket.io setup for real-time features:
+
+```javascript
+// socket/socket.js
+
+const { User, Chat, Message, Notification } = require('../models/user.model');
+const jwt = require('jsonwebtoken');
+
+module.exports = (io) => {
+  // Map to store online users (userId -> socketId)
+  const onlineUsers = new Map();
+
+  // Authentication middleware for socket
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth.token;
+      
+      if (!token) {
+        return next(new Error('Authentication error: Token missing'));
+      }
+      
+      // Verify token
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      if (!decoded) {
+        return next(new Error('Authentication error: Invalid token'));
+      }
+      
+      // Attach user to socket
+      const user = await User.findById(decoded.id).select('-password');
+      
+      if (!user) {
+        return next(new Error('Authentication error: User not found'));
+      }
+      
+      socket.user = user;
+      next();
+    } catch (err) {
+      return next(new Error('Authentication error: ' + err.message));
+    }
+  });
+
+  io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.user.username} (${socket.user._id})`);
+    
+    // Add user to online users
+    onlineUsers.set(socket.user._id.toString(), socket.id);
+    
+    // Emit online users list
+    io.emit('onlineUsers', Array.from(onlineUsers.keys()));
+    
+    // Join user to their personal room
+    socket.join(socket.user._id.toString());
+    
+    // Handle private message
+    socket.on('sendMessage', async (data) => {
+      try {
+        const { chatId, content, recipientId, giftId } = data;
+        
+        // Get or create chat
+        let chat;
+        
+        if (chatId) {
+          chat = await Chat.findById(chatId);
+          
+          if (!chat) {
+            return socket.emit('errorMessage', {
+              message: 'Chat not found'
+            });
+          }
+          
+          // Check if user is a participant
+          if (!chat.participants.includes(socket.user._id)) {
+            return socket.emit('errorMessage', {
+              message: 'You are not a participant in this chat'
+            });
+          }
+        } else if (recipientId) {
+          // Check if chat already exists between users
+          chat = await Chat.findOne({
+            participants: {
+              $all: [socket.user._id, recipientId],
+              $
+```Let me continue with the implementation of our TikTok clone:
+
+```javascript
+// socket/socket.js (continued)
+              $size: 2
+            }
+          });
+          
+          if (!chat) {
+            // Create new chat
+            chat = new Chat({
+              participants: [socket.user._id, recipientId],
+              isApproved: false // Message request needs approval
+            });
+            await chat.save();
+          }
+        } else {
+          return socket.emit('errorMessage', {
+            message: 'Missing chatId or recipientId'
+          });
+        }
+        
+        // Create message
+        const message = new Message({
+          sender: socket.user._id,
+          chat: chat._id,
+          content,
+          gift: giftId || null
+        });
+        
+        await message.save();
+        
+        // Update chat with latest message
+        chat.messages.push(message._id);
+        chat.latestMessage = message._id;
+        await chat.save();
+        
+        // Populate message with sender info
+        const populatedMessage = await Message.findById(message._id)
+          .populate('sender', 'username fullName profilePicture')
+          .populate('gift');
+        
+        // Send message to all participants
+        chat.participants.forEach(participant => {
+          if (onlineUsers.has(participant.toString())) {
+            io.to(onlineUsers.get(participant.toString())).emit('newMessage', {
+              message: populatedMessage
+            });
+          }
+        });
+        
+        // Create notification for recipient if chat is approved or it's a new message request
+        const recipientId = chat.participants.find(
+          id => id.toString() !== socket.user._id.toString()
+        );
+        
+        if (recipientId) {
+          // Create notification
+          const notificationType = chat.isApproved ? 'message' : 'message_request';
+          
+          const notification = new Notification({
+            recipient: recipientId,
+            sender: socket.user._id,
+            type: notificationType,
+            chat: chat._id,
+            message: content.substring(0, 50) + (content.length > 50 ? '...' : '')
+          });
+          
+          await notification.save();
+          
+          // Send notification to recipient
+          if (onlineUsers.has(recipientId.toString())) {
+            io.to(onlineUsers.get(recipientId.toString())).emit('newNotification', {
+              notification: await Notification.findById(notification._id)
+                .populate('sender', 'username fullName profilePicture')
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Send message error:', err);
+        socket.emit('errorMessage', {
+          message: 'Failed to send message',
+          error: err.message
+        });
+      }
+    });
+    
+    // Handle message request response
+    socket.on('respondToMessageRequest', async (data) => {
+      try {
+        const { chatId, accept } = data;
+        
+        const chat = await Chat.findById(chatId);
+        
+        if (!chat) {
+          return socket.emit('errorMessage', {
+            message: 'Chat not found'
+          });
+        }
+        
+        // Check if user is a participant
+        if (!chat.participants.includes(socket.user._id)) {
+          return socket.emit('errorMessage', {
+            message: 'You are not a participant in this chat'
+          });
+        }
+        
+        if (accept) {
+          // Accept message request
+          chat.isApproved = true;
+          await chat.save();
+          
+          // Notify both participants
+          chat.participants.forEach(participant => {
+            if (onlineUsers.has(participant.toString())) {
+              io.to(onlineUsers.get(participant.toString())).emit('messageRequestAccepted', {
+                chatId: chat._id
+              });
+            }
+          });
+        } else {
+          // Reject message request - option to delete the chat
+          await Chat.findByIdAndDelete(chatId);
+          
+          // Notify sender that request was rejected
+          const sender = chat.participants.find(
+            id => id.toString() !== socket.user._id.toString()
+          );
+          
+          if (sender && onlineUsers.has(sender.toString())) {
+            io.to(onlineUsers.get(sender.toString())).emit('messageRequestRejected', {
+              chatId: chat._id
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Message request response error:', err);
+        socket.emit('errorMessage', {
+          message: 'Failed to respond to message request',
+          error: err.message
+        });
+      }
+    });
+    
+    // Handle video like
+    socket.on('likeVideo', async (data) => {
+      try {
+        const { videoId } = data;
+        
+        const video = await Video.findById(videoId);
+        
+        if (!video) {
+          return socket.emit('errorMessage', {
+            message: 'Video not found'
+          });
+        }
+        
+        // Check if user already liked the video
+        const alreadyLiked = video.likes.includes(socket.user._id);
+        
+        if (alreadyLiked) {
+          // Unlike video
+          video.likes = video.likes.filter(
+            id => id.toString() !== socket.user._id.toString()
+          );
+        } else {
+          // Like video
+          video.likes.push(socket.user._id);
+          
+          // Create notification (only when liking, not unliking)
+          if (video.user.toString() !== socket.user._id.toString()) {
+            const notification = new Notification({
+              recipient: video.user,
+              sender: socket.user._id,
+              type: 'like',
+              video: video._id
+            });
+            
+            await notification.save();
+            
+            // Send notification to video owner
+            if (onlineUsers.has(video.user.toString())) {
+              io.to(onlineUsers.get(video.user.toString())).emit('newNotification', {
+                notification: await Notification.findById(notification._id)
+                  .populate('sender', 'username fullName profilePicture')
+                  .populate('video', 'thumbnail')
+              });
+            }
+          }
+        }
+        
+        await video.save();
+        
+        // Emit updated like count
+        socket.emit('videoLikeUpdated', {
+          videoId: video._id,
+          likeCount: video.likes.length,
+          liked: !alreadyLiked
+        });
+      } catch (err) {
+        console.error('Like video error:', err);
+        socket.emit('errorMessage', {
+          message: 'Failed to like/unlike video',
+          error: err.message
+        });
+      }
+    });
+    
+    // Handle user typing
+    socket.on('typing', (data) => {
+      const { chatId, isTyping } = data;
+      
+      const recipientId = chat.participants.find(
+        id => id.toString() !== socket.user._id.toString()
+      );
+      
+      if (recipientId && onlineUsers.has(recipientId.toString())) {
+        io.to(onlineUsers.get(recipientId.toString())).emit('userTyping', {
+          chatId,
+          userId: socket.user._id,
+          isTyping
+        });
+      }
+    });
+    
+    // Handle disconnect
+    socket.on('disconnect', () => {
+      console.log(`User disconnected: ${socket.user.username} (${socket.user._id})`);
+      
+      // Remove user from online users
+      onlineUsers.delete(socket.user._id.toString());
+      
+      // Emit updated online users list
+      io.emit('onlineUsers', Array.from(onlineUsers.keys()));
+    });
+  });
+};
+
+```
+
+Now, let's implement video-related routes for our TikTok clone:
+
+```javascript
+// routes/video.routes.js
+
+const express = require('express');
+const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { promisify } = require('util');
+const unlinkAsync = promisify(fs.unlink);
+const { v4: uuidv4 } = require('uuid');
+const { Video, User, Comment } = require('../models/user.model');
+const { isAuthenticated } = require('../middleware/auth.middleware');
+const ffmpeg = require('fluent-ffmpeg');
+
+// Configure multer for video uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = './uploads/videos';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  // Accept video files only
+  if (file.mimetype.startsWith('video/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only video files are allowed!'), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 100 * 1024 * 1024 // 100MB limit
+  }
+});
+
+// Generate thumbnail from video
+const generateThumbnail = async (videoPath, thumbnailPath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoPath)
+      .screenshots({
+        count: 1,
+        folder: path.dirname(thumbnailPath),
+        filename: path.basename(thumbnailPath),
+        size: '640x1136' // Common TikTok aspect ratio
+      })
+      .on('end', () => {
+        resolve(thumbnailPath);
+      })
+      .on('error', (err) => {
+        reject(err);
+      });
+  });
+};
+
+// Upload a new video
+router.post('/', isAuthenticated, upload.single('video'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No video file uploaded'
+      });
+    }
+
+    const { description, song, tags } = req.body;
+    const videoPath = req.file.path;
+    const videoUrl = `/uploads/videos/${req.file.filename}`;
+    
+    // Generate thumbnail
+    const thumbnailFilename = `${path.parse(req.file.filename).name}.jpg`;
+    const thumbnailPath = `./uploads/thumbnails/${thumbnailFilename}`;
+    
+    // Create thumbnails directory if it doesn't exist
+    if (!fs.existsSync('./uploads/thumbnails')) {
+      fs.mkdirSync('./uploads/thumbnails', { recursive: true });
+    }
+    
+    await generateThumbnail(videoPath, thumbnailPath);
+    const thumbnailUrl = `/uploads/thumbnails/${thumbnailFilename}`;
+
+    // Create new video
+    const video = new Video({
+      user: req.user._id,
+      videoUrl,
+      thumbnail: thumbnailUrl,
+      description: description || '',
+      song: song || 'Original Sound',
+      tags: tags ? tags.split(',').map(tag => tag.trim()) : []
+    });
+
+    await video.save();
+
+    // Add video to user's videos
+    await User.findByIdAndUpdate(req.user._id, {
+      $push: { videos: video._id }
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Video uploaded successfully',
+      video
+    });
+  } catch (err) {
+    console.error('Video upload error:', err);
+    
+    // Delete uploaded file if an error occurs
+    if (req.file) {
+      try {
+        await unlinkAsync(req.file.path);
+      } catch (unlinkErr) {
+        console.error('Error deleting file:', unlinkErr);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload video',
+      error: err.message
+    });
+  }
+});
+
+// Get video by ID
+router.get('/:id', async (req, res) => {
+  try {
+    const video = await Video.findById(req.params.id)
+      .populate('user', 'username fullName profilePicture')
+      .populate({
+        path: 'comments',
+        populate: {
+          path: 'user',
+          select: 'username fullName profilePicture'
+        },
+        options: { sort: { createdAt: -1 } }
+      });
+
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // Increment view count
+    video.views += 1;
+    await video.save();
+
+    res.status(200).json({
+      success: true,
+      video
+    });
+  } catch (err) {
+    console.error('Get video error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get video',
+      error: err.message
+    });
+  }
+});
+
+// Get feed videos (for main feed)
+router.get('/', async (req, res) => {
+  try {
+    const { page = 1, limit = 10 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const videos = await Video.find()
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate('user', 'username fullName profilePicture')
+      .populate({
+        path: 'comments',
+        options: { sort: { createdAt: -1 }, limit: 3 },
+        populate: {
+          path: 'user',
+          select: 'username fullName profilePicture'
+        }
+      });
+
+    const totalVideos = await Video.countDocuments();
+
+    res.status(200).json({
+      success: true,
+      videos,
+      currentPage: parseInt(page),
+      totalPages: Math.ceil(totalVideos / parseInt(limit)),
+      totalVideos
+    });
+  } catch (err) {
+    console.error('Get feed videos error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get feed videos',
+      error: err.message
+    });
+  }
+});
+
+// Get videos by user
+router.get('/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 12 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const videos = await Video.find({ user: userId })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate('user', 'username fullName profilePicture');
+
+    const totalVideos = await Video.countDocuments({ user: userId });
+
+    res.status(200).json({
+      success: true,
+      videos,
+      currentPage: parseInt(page),
+      totalPages: Math.ceil(totalVideos / parseInt(limit)),
+      totalVideos
+    });
+  } catch (err) {
+    console.error('Get user videos error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get user videos',
+      error: err.message
+    });
+  }
+});
+
+// Get videos by tag
+router.get('/tag/:tag', async (req, res) => {
+  try {
+    const { tag } = req.params;
+    const { page = 1, limit = 12 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const videos = await Video.find({ tags: tag })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate('user', 'username fullName profilePicture');
+
+    const totalVideos = await Video.countDocuments({ tags: tag });
+
+    res.status(200).json({
+      success: true,
+      videos,
+      tag,
+      currentPage: parseInt(page),
+      totalPages: Math.ceil(totalVideos / parseInt(limit)),
+      totalVideos
+    });
+  } catch (err) {
+    console.error('Get tag videos error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get videos by tag',
+      error: err.message
+    });
+  }
+});
+
+// Comment on a video
+router.post('/:id/comment', isAuthenticated, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text } = req.body;
+
+    const video = await Video.findById(id);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // Create comment
+    const comment = new Comment({
+      user: req.user._id,
+      video: id,
+      text
+    });
+
+    await comment.save();
+
+    // Add comment to video
+    video.comments.push(comment._id);
+    await video.save();
+
+    // Populate comment with user info
+    const populatedComment = await Comment.findById(comment._id)
+      .populate('user', 'username fullName profilePicture');
+
+    // Create notification for video owner (if commenter is not the owner)
+    if (video.user.toString() !== req.user._id.toString()) {
+      const notification = new Notification({
+        recipient: video.user,
+        sender: req.user._id,
+        type: 'comment',
+        video: video._id,
+        comment: comment._id,
+        message: text.substring(0, 50) + (text.length > 50 ? '...' : '')
+      });
+
+      await notification.save();
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Comment added successfully',
+      comment: populatedComment
+    });
+  } catch (err) {
+    console.error('Add comment error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add comment',
+      error: err.message
+    });
+  }
+});
+
+// Get comments for a video
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const video = await Video.findById(id);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    const comments = await Comment.find({ video: id, parentComment: null })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .populate('user', 'username fullName profilePicture')
+      .populate({
+        path: 'replies',
+        populate: {
+          path: 'user',
+          select: 'username fullName profilePicture'
+        },
+        options: { sort: { createdAt: 1 } }
+      });
+
+    const totalComments = await Comment.countDocuments({ video: id, parentComment: null });
+
+    res.status(200).json({
+      success: true,
+      comments,
+      currentPage: parseInt(page),
+      totalPages: Math.ceil(totalComments / parseInt(limit)),
+      totalComments
+    });
+  } catch (err) {
+    console.error('Get comments error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get comments',
+      error: err.message
+    });
+  }
+});
+
+// Delete a video
+router.delete('/:id', isAuthenticated, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const video = await Video.findById(id);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // Check if user is the owner of the video
+    if (video.user.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Unauthorized: You do not own this video'
+      });
+    }
+
+    // Delete video file
+    const videoPath = path.join(__dirname, '..', video.videoUrl);
+    if (fs.existsSync(videoPath)) {
+      await unlinkAsync(videoPath);
+    }
+
+    // Delete thumbnail
+    const thumbnailPath = path.join(__dirname, '..', video.thumbnail);
+    if (fs.existsSync(thumbnailPath)) {
+      await unlinkAsync(thumbnailPath);
+    }
+
+    // Delete comments
+    await Comment.deleteMany({ video: id });
+
+    // Delete video from user's videos
+    await User.findByIdAndUpdate(req.user._id, {
+      $pull: { videos: id }
+    });
+
+    // Delete video document
+    await Video.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: 'Video deleted successfully'
+    });
+  } catch (err) {
+    console.error('Delete video error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete video',
+      error: err.message
+    });
+  }
+});
+
+module.exports = router;
+
+```
+
+Now, let's implement the gift feature for the TikTok clone:
+
+```javascript
+// routes/gift.routes.js
+
+const express = require('express');
+const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { promisify } = require('util');
+const unlinkAsync = promisify(fs.unlink);
+const { v4: uuidv4 } = require('uuid');
+const { Gift, GiftTransaction, CoinTransaction, User, Video, Notification } = require('../models/user.model');
+const { isAuthenticated, isAdmin } = require('../middleware/auth.middleware');
+
+// Configure multer for gift image uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = './uploads/gifts';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  // Accept image files only
+  if (file.mimetype.startsWith('image/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files are allowed!'), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
+
+// Create a new gift (admin only)
+router.post('/', isAuthenticated, isAdmin, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image file uploaded'
+      });
+    }
+
+    const { name, description, coinValue, category } = req.body;
+    const imageUrl = `/uploads/gifts/${req.file.filename}`;
+
+    // Create new gift
+    const gift = new Gift({
+      name,
+      description,
+      imageUrl,
+      coinValue: parseInt(coinValue),
+      category: category || 'basic'
+    });
+
+    await gift.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Gift created successfully',
+      gift
+    });
+  } catch (err) {
+    console.error('Create gift error:', err);
+    
+    // Delete uploaded file if an error occurs
+    if (req.file) {
+      try {
+        await unlinkAsync(req.file.path);
+      } catch (unlinkErr) {
+        console.error('Error deleting file:', unlinkErr);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create gift',
+      error: err.message
+    });
+  }
+});
+
+// Get all gifts
+router.get('/', async (req, res) => {
+  try {
+    const { category } = req.query;
+    
+    const query = { isActive: true };
+    if (category) {
+      query.category = category;
+    }
+
+    const gifts = await Gift.find(query).sort({ coinValue: 1 });
+
+    res.status(200).json({
+      success: true,
+      gifts
+    });
+  } catch (err) {
+    console.error('Get gifts error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get gifts',
+      error: err.message
+    });
+  }
+});
+
+// Send gift to a user for a video
+router.post('/send/video', isAuthenticated, async (req, res) => {
+  try {
+    const { giftId, videoId, message } = req.body;
+
+    // Find gift
+    const gift = await Gift.findById(giftId);
+    if (!gift || !gift.isActive) {
+      return res.status(404).json({
+        success: false,
+        message: 'Gift not found or is not active'
+      });
+    }
+
+    // Find video and its owner
+    const video = await Video.findById(videoId).populate('user');
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    const sender = await User.findById(req.user._id);
+    const recipient = video.user;
+
+    // Check if sender has enough coins
+    if (sender.coins < gift.coinValue) {
+      return res.status(400).json({
+        success: false,
+        message: 'You don\'t have enough coins to send this gift'
+      });
+    }
+
+    // Create gift transaction
+    const giftTransaction = new GiftTransaction({
+      sender: sender._id,
+      recipient: recipient._id,
+      gift: gift._id,
+      video: video._id,
+      coinAmount: gift.coinValue
+    });
+
+    await giftTransaction.save();
+
+    // Update sender's coin balance
+    sender.coins -= gift.coinValue;
+    await sender.save();
+
+    // Update recipient's coin balance (70% of the gift value)
+    const recipientCoinAmount = Math.floor(gift.coinValue * 0.7);
+    recipient.coins += recipientCoinAmount;
+    await recipient.save();
+
+    // Create coin transactions for sender and recipient
+    const senderCoinTx = new CoinTransaction({
+      user: sender._id,
+      amount: -gift.coinValue,
+      type: 'gift_sent',
+      reference: `Gift to ${recipient.username} for video`
+    });
+
+    const recipientCoinTx = new CoinTransaction({
+      user: recipient._id,
+      amount: recipientCoinAmount,
+      type: 'gift_received',
+      reference: `Gift from ${sender.username} for video`
+    });
+
+    await senderCoinTx.save();
+    await recipientCoinTx.save();
+
+    // Create notification for recipient
+    const notification = new Notification({
+      recipient: recipient._id,
+      sender: sender._id,
+      type: 'gift',
+      video: video._id,
+      message: `${sender.username} sent you a gift: ${gift.name}`
+    });
+
+    await notification.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Gift sent successfully',
+      giftTransaction
+    });
+  } catch (err) {
+    console.error('Send gift error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send gift',
+      error: err.message
+    });
+  }
+});
+
+// Get gift transactions for a user
+router.get('/transactions', isAuthenticated, async (req, res) => {
+  try {
+    const { type } = req.query; // 'sent' or 'received'
+    
+    let query = {};
+    
+    if (type === 'sent') {
+      query.sender = req.user._id;
+    } else if (type === 'received') {
+      query.recipient = req.user._id;
+    } else {
+      query = {
+        $or: [
+          { sender: req.user._id },
+          { recipient: req.user._id }
+        ]
+      };
+    }
+
+    const transactions = await GiftTransaction.find(query)
+      .sort({ createdAt: -1 })
+      .populate('gift')
+      .populate('sender', 'username fullName profilePicture')
+      .populate('recipient', 'username fullName profilePicture')
+      .populate('video', 'thumbnail');
+
+    res.status(200).json({
+      success: true,
+      transactions
+    });
+  } catch (err) {
+    console.error('Get gift transactions error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get gift transactions',
+      error: err.message
+    });
+  }
+});
+
+// Buy coins
+router.post('/coins/buy', isAuthenticated, async (req, res) => {
+  try {
+    const { amount, paymentId } = req.body;
+    
+    // In a real application, you would validate the payment with a payment processor
+    // For demo purposes, we'll assume the payment was successful
+    
+    const coinAmount = parseInt(amount);
+    
+    if (isNaN(coinAmount) || coinAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid coin amount'
+      });
+    }
+    
+    // Update user's coin balance
+    const user = await User.findById(req.user._id);
+    user.coins += coinAmount;
+    await user.save();
+    
+    // Create coin transaction
+    const coinTransaction = new CoinTransaction({
+      user: user._id,
+      amount: coinAmount,
+      type: 'purchase',
+      reference: `Purchase of ${coinAmount} coins`,
+      paymentId,
+      status: 'completed'
+    });
+    
+    await coinTransaction.save();
+    
+    res.status(200).json({
+      success: true,
+      message: `Successfully purchased ${coinAmount} coins`,
+      transaction: coinTransaction,
+      newBalance: user.coins
+    });
+  } catch (err) {
+    console.error('Buy coins error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to purchase coins',
+      error: err.message
+    });
+  }
+});
+
+// Get coin transactions for current user
+router.get('/coins/transactions', isAuthenticated, async (req, res) => {
+  try {
+    const transactions = await CoinTransaction.find({ user: req.user._id })
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      transactions
+    });
+  } catch (err) {
+    console.error('Get coin transactions error:', err);
+```

@@ -1,0 +1,41 @@
+pragma solidity ^0.8.0;
+
+contract Payments {
+    address public owner;
+    uint256 public subscriptionFee = 1 * 10**6; // $1 in USDC (6 decimals)
+    uint256 public perUseFee = 0.01 * 10**6; // $0.01 in USDC
+    mapping(address => uint256) public subscriptions; // Expiry timestamp
+    mapping(address => uint256) public balances; // Micro-payment balance
+
+    event Subscribed(address user, uint256 expiry);
+    event MicroPayment(address user, uint256 amount);
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function subscribe() external payable {
+        require(msg.value >= subscriptionFee, "Insufficient payment");
+        subscriptions[msg.sender] = block.timestamp + 30 days;
+        emit Subscribed(msg.sender, subscriptions[msg.sender]);
+    }
+
+    function payPerUse() external payable {
+        require(msg.value >= perUseFee, "Insufficient payment");
+        balances[msg.sender] += msg.value;
+        emit MicroPayment(msg.sender, msg.value);
+    }
+
+    function withdraw() external {
+        require(msg.sender == owner, "Not owner");
+        payable(owner).transfer(address(this).balance);
+    }
+
+    function isSubscribed(address user) external view returns (bool) {
+        return subscriptions[user] > block.timestamp;
+    }
+
+    function hasBalance(address user) external view returns (bool) {
+        return balances[user] >= perUseFee;
+    }
+}

@@ -1,0 +1,833 @@
+To build a minimal sports betting app inspired by FanDuel Sportsbook using your knowledge of **Express.js**, **MongoDB**, **React**, and **React Native**, we’ll focus on core features that are feasible within a simplified scope while ensuring a functional prototype. The app will include user authentication, basic betting functionality (e.g., moneyline bets on a few sports), a simple bet slip, and geolocation simulation for compliance. Given your tech stack, we’ll leverage **Express.js** for the backend, **MongoDB** for data storage, and **React Native** for a cross-platform mobile app frontend. Since you’re familiar with React, we’ll assume you can adapt to React Native’s mobile-specific components.
+
+The goal is a **Minimal Viable Product (MVP)** with:
+- User registration/login.
+- Display of sample sports events with moneyline odds.
+- Ability to place and view bets (no real money, just simulated).
+- Basic geolocation check (simulated for development).
+- Simple, clean UI.
+
+Below, I’ll provide a step-by-step implementation plan covering the backend, frontend, and setup instructions, with code artifacts for each component. The app will be kept minimal to reduce complexity while demonstrating core betting app functionality. I’ll assume you’re developing for a single market (e.g., a U.S. state) and simulating real-time data for now. Note that a production betting app requires regulatory compliance, real payment integration, and live odds APIs, which we’ll simplify for the MVP.
+
+---
+
+### **Implementation Plan for Minimal Sports Betting App**
+
+#### **1. Features of the MVP**
+- **Backend (Express.js + MongoDB)**:
+  - User authentication (register/login with JWT).
+  - API endpoints for sports events (hardcoded for simplicity).
+  - Bet placement and retrieval (stored in MongoDB).
+  - Simulated geolocation check (returns a mock state).
+- **Frontend (React Native)**:
+  - Login/register screens.
+  - Home screen with a list of sports events (e.g., NFL, NBA games).
+  - Bet slip to select and place bets.
+  - Profile screen to view placed bets.
+- **Constraints**:
+  - No real-time odds (use static data).
+  - No payment processing (simulate wallet balance).
+  - No live streaming or in-game betting.
+  - Simplified UI with basic styling.
+
+#### **2. Tech Stack**
+- **Backend**: Express.js (Node.js), MongoDB (via Mongoose), JWT for authentication.
+- **Frontend**: React Native (for iOS/Android), Axios for API calls, React Navigation for routing.
+- **Tools**: MongoDB Atlas (cloud database), Node.js, Expo (for React Native development).
+- **Hosting/Deployment**: Local development for now; consider Heroku or Vercel for future deployment.
+
+#### **3. Development Steps**
+
+##### **Step 1: Backend Setup (Express.js + MongoDB)**
+
+**Objective**: Create a REST API with endpoints for users, events, bets, and geolocation.
+
+1. **Project Setup**:
+   - Initialize a Node.js project.
+   - Install dependencies: Express, Mongoose, JWT, bcrypt, dotenv, cors.
+   - Set up MongoDB Atlas for cloud storage.
+   - Create a `.env` file for environment variables (MongoDB URI, JWT secret).
+
+2. **Folder Structure**:
+```
+backend/
+├── config/
+│   └── db.js
+├── models/
+│   ├── User.js
+│   ├── Event.js
+│   └── Bet.js
+├── routes/
+│   ├── auth.js
+│   ├── events.js
+│   └── bets.js
+├── middleware/
+│   └── auth.js
+├── .env
+├── package.json
+└── server.js
+```
+
+3. **Key Components**:
+   - **User Model**: Stores username, password (hashed), and wallet balance.
+   - **Event Model**: Stores sports events with teams, odds, and sport type.
+   - **Bet Model**: Stores user bets with event ID, amount, and selection.
+   - **Auth Routes**: Register, login with JWT.
+   - **Event Routes**: Get list of events.
+   - **Bet Routes**: Place and view bets.
+   - **Geolocation**: Mock endpoint to simulate state check.
+
+4. **Code Artifacts**:
+
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+require('dotenv').config();
+const authRoutes = require('./routes/auth');
+const eventRoutes = require('./routes/events');
+const betRoutes = require('./routes/bets');
+
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/bets', betRoutes);
+
+// Mock geolocation endpoint
+app.get('/api/geolocation', (req, res) => {
+  res.json({ state: 'NJ', allowed: true }); // Simulate NJ (legal state)
+});
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error(err));
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+```
+
+```javascript
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  balance: { type: Number, default: 1000 }, // Simulated wallet
+});
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+```javascript
+const mongoose = require('mongoose');
+
+const eventSchema = new mongoose.Schema({
+  sport: { type: String, required: true },
+  team1: { type: String, required: true },
+  team2: { type: String, required: true },
+  odds1: { type: Number, required: true },
+  odds2: { type: Number, required: true },
+  date: { type: Date, required: true },
+});
+
+module.exports = mongoose.model('Event', eventSchema);
+```
+
+```javascript
+const mongoose = require('mongoose');
+
+const betSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  eventId: { type: mongoose.Schema.Types.ObjectId, ref: 'Event', required: true },
+  amount: { type: Number, required: true },
+  selection: { type: String, required: true }, // e.g., "team1" or "team2"
+  status: { type: String, default: 'pending' },
+});
+
+module.exports = mongoose.model('Bet', betSchema);
+```
+
+```javascript
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const router = express.Router();
+
+// Register
+router.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    let user = await User.findOne({ username });
+    if (user) return res.status(400).json({ msg: 'User exists' });
+
+    user = new User({
+      username,
+      password: await bcrypt.hash(password, 10),
+    });
+    await user.save();
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Login
+router.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await User.findOne({ username });
+    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+```javascript
+const express = require('express');
+const Event = require('../models/Event');
+const router = express.Router();
+
+// Get all events (hardcoded for MVP)
+router.get('/', async (req, res) => {
+  try {
+    let events = await Event.find();
+    if (events.length === 0) {
+      // Seed sample events
+      events = [
+        { sport: 'NFL', team1: 'Chiefs', team2: 'Ravens', odds1: -110, odds2: +110, date: new Date() },
+        { sport: 'NBA', team1: 'Lakers', team2: 'Celtics', odds1: +120, odds2: -140, date: new Date() },
+      ];
+      await Event.insertMany(events);
+    }
+    res.json(events);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+```javascript
+const express = require('express');
+const auth = require('../middleware/auth');
+const Bet = require('../models/Bet');
+const User = require('../models/User');
+const router = express.Router();
+
+// Place a bet
+router.post('/', auth, async (req, res) => {
+  const { eventId, amount, selection } = req.body;
+  try {
+    const user = await User.findById(req.user.userId);
+    if (user.balance < amount) return res.status(400).json({ msg: 'Insufficient balance' });
+
+    const bet = new Bet({
+      userId: req.user.userId,
+      eventId,
+      amount,
+      selection,
+    });
+    await bet.save();
+
+    user.balance -= amount;
+    await user.save();
+
+    res.json(bet);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get user bets
+router.get('/', auth, async (req, res) => {
+  try {
+    const bets = await Bet.find({ userId: req.user.userId }).populate('eventId');
+    res.json(bets);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+```javascript
+const jwt = require('jsonwebtoken');
+
+module.exports = (req, res, next) => {
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ msg: 'No token, authorization denied' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    res.status(401).json({ msg: 'Token is not valid' });
+  }
+};
+```
+
+
+MONGO_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/betting-app?retryWrites=true&w=majority
+JWT_SECRET=your_jwt_secret
+PORT=5000
+
+
+**Setup Instructions**:
+- Install Node.js and MongoDB Atlas.
+- Run `npm init -y` and install dependencies: `npm install express mongoose bcryptjs jsonwebtoken dotenv cors`.
+- Create a MongoDB Atlas cluster and add the connection string to `.env`.
+- Run the server: `node server.js`.
+- Test endpoints with Postman (e.g., `POST /api/auth/register`, `GET /api/events`).
+
+---
+
+##### **Step 2: Frontend Setup (React Native)**
+
+**Objective**: Build a mobile app with login, event list, bet slip, and profile screens.
+
+1. **Project Setup**:
+   - Install Expo CLI: `npm install -g expo-cli`.
+   - Create a React Native project: `expo init betting-app --template blank`.
+   - Install dependencies: Axios, React Navigation, AsyncStorage.
+   - Set up navigation with stack and bottom tabs.
+
+2. **Folder Structure**:
+```
+frontend/
+├── screens/
+│   ├── LoginScreen.js
+│   ├── RegisterScreen.js
+│   ├── HomeScreen.js
+│   ├── BetSlipScreen.js
+│   └── ProfileScreen.js
+├── components/
+│   └── EventCard.js
+├── navigation/
+│   └── AppNavigator.js
+├── App.js
+├── package.json
+└── .env
+```
+
+3. **Key Components**:
+   - **Login/Register Screens**: Form inputs for username/password, API calls to backend.
+   - **Home Screen**: List of events fetched from `/api/events`, displayed as cards.
+   - **Bet Slip Screen**: Form to select event, amount, and team, with geolocation check.
+   - **Profile Screen**: Displays user’s placed bets and balance.
+   - **EventCard Component**: Reusable card for each event with odds and bet button.
+
+4. **Code Artifacts**:
+
+```javascript
+import { StatusBar } from 'expo-status-bar';
+import { StyleSheet, View } from 'react-native';
+import AppNavigator from './navigation/AppNavigator';
+
+export default function App() {
+  return (
+    <View style={styles.container}>
+      <AppNavigator />
+      <StatusBar style="auto" />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+});
+```
+
+```javascript
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabsNavigator } from '@react-navigation/bottom-tabs';
+import LoginScreen from '../screens/LoginScreen';
+import RegisterScreen from '../screens/RegisterScreen';
+import HomeScreen from '../screens/HomeScreen';
+import BetSlipScreen from '../screens/BetSlipScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabsNavigator();
+
+function MainTabs() {
+  return (
+    <Tab.Navigator>
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Bet Slip" component={BetSlipScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+    </Tab.Navigator>
+  );
+}
+
+export default function AppNavigator() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Login">
+        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Register" component={RegisterScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+```
+
+```javascript
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, StyleSheet } from 'react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function LoginScreen({ navigation }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleLogin = async () => {
+    try {
+      const res = await axios.post('http://localhost:5000/api/auth/login', { username, password });
+      await AsyncStorage.setItem('token', res.data.token);
+      navigation.navigate('Main');
+    } catch (err) {
+      alert(err.response.data.msg);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Login</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Username"
+        value={username}
+        onChangeText={setUsername}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+      />
+      <Button title="Login" onPress={handleLogin} />
+      <Button title="Register" onPress={() => navigation.navigate('Register')} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: 'center', padding: 20 },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center' },
+  input: { borderWidth: 1, padding: 10, marginBottom: 10, borderRadius: 5 },
+});
+```
+
+```javascript
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, StyleSheet } from 'react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function RegisterScreen({ navigation }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleRegister = async () => {
+    try {
+      const res = await axios.post('http://localhost:5000/api/auth/register', { username, password });
+      await AsyncStorage.setItem('token', res.data.token);
+      navigation.navigate('Main');
+    } catch (err) {
+      alert(err.response.data.msg);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Register</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Username"
+        value={username}
+        onChangeText={setUsername}
+      />
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+      />
+      <Button title="Register" onPress={handleRegister} />
+      <Button title="Back to Login" onPress={() => navigation.navigate('Login')} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, justifyContent: 'center', padding: 20 },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center' },
+  input: { borderWidth: 1, padding: 10, marginBottom: 10, borderRadius: 5 },
+});
+```
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
+import axios from 'axios';
+import EventCard from '../components/EventCard';
+
+export default function HomeScreen({ navigation }) {
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    const fetchEvents = async () => {
+      try {
+        const res = await axios.get('http://localhost:5000/api/events');
+        setEvents(res.data);
+      } catch (err) {
+        alert('Error fetching events');
+      }
+    };
+    fetchEvents();
+  }, []);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Sports Events</Text>
+      <FlatList
+        data={events}
+        keyExtractor={item => item._id}
+        renderItem={({ item }) => (
+          <EventCard event={item} onBet={() => navigation.navigate('Bet Slip', { event })} />
+        )}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20 },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center' },
+});
+```
+
+```javascript
+import React from 'react';
+import { View, Text, Button, StyleSheet } from 'react-native';
+
+export default function EventCard({ event, onBet }) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.title}>{`${event.team1} vs ${event.team2}`}</Text>
+      <Text>{`Sport: ${event.sport}`}</Text>
+      <Text>{`${event.team1} Odds: ${event.odds1 > 0 ? '+' : ''}${event.odds1}`}</Text>
+      <Text>{`${event.team2} Odds: ${event.odds2 > 0 ? '+' : ''}${event.odds2}`}</Text>
+      <Button title="Place Bet" onPress={onBet} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: { borderWidth: 1, padding: 10, marginBottom: 10, borderRadius: 5 },
+  title: { fontSize: 18, fontWeight: 'bold' },
+});
+```
+
+```javascript
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, StyleSheet } from 'react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function BetSlipScreen({ route, navigation }) {
+  const { event } = route.params;
+  const [amount, setAmount] = useState('');
+  const [selection, setSelection] = useState(event.team1);
+
+  const handleBet = async () => {
+    try {
+      // Check geolocation
+      const geoRes = await axios.get('http://localhost:5000/api/geolocation');
+      if (!geoRes.data.allowed) return alert('Betting not allowed in your state');
+
+      const token = await AsyncStorage.getItem('token');
+      await axios.post(
+        'http://localhost:5000/api/bets',
+        { eventId: event._id, amount: parseFloat(amount), selection },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      alert('Bet placed!');
+      navigation.navigate('Profile');
+    } catch (err) {
+      alert(err.response.data.msg);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Place Bet</Text>
+      <Text>{`${event.team1} vs ${event.team2}`}</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Bet Amount"
+        value={amount}
+        onChangeText={setAmount}
+        keyboardType="numeric"
+      />
+      <Text>Select Team:</Text>
+      <Button title={event.team1} onPress={() => setSelection(event.team1)} />
+      <Button title={event.team2} onPress={() => setSelection(event.team2)} />
+      <Button title="Confirm Bet" onPress={handleBet} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20 },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center' },
+  input: { borderWidth: 1, padding: 10, marginBottom: 10, borderRadius: 5 },
+});
+```
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function ProfileScreen() {
+  const [bets, setBets] = useState([]);
+  const [balance, setBalance] = useState(1000);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const token = await AsyncStorage.getItem('token');
+        const betsRes = await axios.get('http://localhost:5000/api/bets', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setBets(betsRes.data);
+
+        const userRes = await axios.get('http://localhost:5000/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setBalance(userRes.data.balance);
+      } catch (err) {
+        alert('Error fetching data');
+      }
+    };
+    fetchData();
+  }, []);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Profile</Text>
+      <Text>{`Balance: $${balance}`}</Text>
+      <Text style={styles.subtitle}>Your Bets</Text>
+      <FlatList
+        data={bets}
+        keyExtractor={item => item._id}
+        renderItem={({ item }) => (
+          <View style={styles.bet}>
+            <Text>{`${item.eventId.team1} vs ${item.eventId.team2}`}</Text>
+            <Text>{`Bet: $${item.amount} on ${item.selection}`}</Text>
+            <Text>{`Status: ${item.status}`}</Text>
+          </View>
+        )}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20 },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center' },
+  subtitle: { fontSize: 18, marginTop: 10 },
+  bet: { borderWidth: 1, padding: 10, marginBottom: 10, borderRadius: 5 },
+});
+```
+
+**Setup Instructions**:
+- Install Expo CLI and create the project.
+- Install dependencies: `npm install axios @react-navigation/native @react-navigation/native-stack @react-navigation/bottom-tabs @react-native-async-storage/async-storage`.
+- Install Expo dependencies: `npx expo install react-native-screens react-native-safe-area-context`.
+- Update the backend to include a `/api/auth/me` endpoint for user data (see below).
+- Run the app: `expo start` and use the Expo Go app or emulator.
+
+```javascript
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const auth = require('../middleware/auth');
+const router = express.Router();
+
+// Register
+router.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    let user = await User.findOne({ username });
+    if (user) return res.status(400).json({ msg: 'User exists' });
+
+    user = new User({
+      username,
+      password: await bcrypt.hash(password, 10),
+    });
+    await user.save();
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Login
+router.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await User.findOne({ username });
+    if (!user) return res.status(400).json({ msg: 'Invalid credentials' });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ msg: 'Invalid credentials' });
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ token });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get user data
+router.get('/me', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password');
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+---
+
+#### **4. Testing and Validation**
+- **Backend**: Use Postman to test endpoints (`/api/auth/register`, `/api/events`, `/api/bets`).
+- **Frontend**: Test on Expo Go or an emulator. Ensure navigation works and API calls succeed.
+- **Geolocation**: Verify the mock geolocation check blocks bets if `allowed: false`.
+- **Edge Cases**: Test insufficient balance, invalid tokens, and empty event lists.
+
+---
+
+#### **5. Deployment (Optional for MVP)**
+- **Backend**: Deploy to Heroku or Railway. Update `.env` with production MongoDB URI.
+- **Frontend**: Publish to Expo’s servers or build APKs for Android/iOS.
+- **Note**: For production, replace `localhost` with your backend URL and implement HTTPS.
+
+---
+
+#### **6. Future Enhancements**
+- Integrate real odds APIs (e.g., Sportradar, Odds API).
+- Add payment gateways (e.g., Stripe for deposits).
+- Implement real geolocation (e.g., Expo Location or third-party services).
+- Enhance UI with animations and dark mode.
+- Add more bet types (e.g., parlays, props).
+
+---
+
+### **Estimated Timeline and Effort**
+- **Timeline**: 2–4 weeks for an individual developer with your skills.
+  - Backend: 1 week (setup, models, routes).
+  - Frontend: 1–2 weeks (UI, navigation, API integration).
+  - Testing: 3–5 days.
+- **Effort**: ~50–80 hours, depending on familiarity with React Native.
+- **Cost**: Free if self-developed, assuming MongoDB Atlas free tier and local testing.
+
+---
+
+### **Challenges and Mitigations**
+- **React Native Learning Curve**: If new to React Native, expect a slight learning curve for mobile-specific components. Use Expo’s documentation and stick to simple layouts.
+- **API Integration**: Ensure backend and frontend URLs align (use `localhost:5000` for development). Test CORS issues early.
+- **Geolocation**: The mock endpoint is a placeholder. For production, integrate a real geolocation service compliant with gambling laws.
+- **Scalability**: MongoDB and Express.js are sufficient for an MVP but may need optimization for high traffic.
+
+---
+
+### **Responsible Gambling Note**
+This MVP is for educational purposes and simulates betting without real money. If you plan to launch a real betting app, ensure compliance with state laws (e.g., licensing, age 21+ restrictions) and include responsible gambling tools (e.g., deposit limits). For support, contact the National Problem Gambling Helpline at 1-800-522-4700.
+
+---
+
+### **Conclusion**
+This minimal sports betting app leverages your Express.js, MongoDB, and React Native skills to create a functional MVP. The backend provides secure authentication and betting functionality, while the frontend offers a clean, mobile-friendly interface. Start by setting up the backend, then build the frontend screens, and test thoroughly. If you need help with specific components (e.g., styling, navigation, or adding features), let me know, and I can provide additional code or guidance. You can also specify a target state or sport for more tailored data!
+
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+require('dotenv').config();
+const authRoutes = require('./routes/auth');
+const eventRoutes = require('./routes/events');
+const betRoutes = require('./routes/bets');
+
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/bets', betRoutes);
+
+// Mock geolocation endpoint
+app.get('/api/geolocation', (req, res) => {
+  res.json({ state: 'NJ', allowed: true }); // Simulate NJ (legal state)
+});
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error(err));
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+```

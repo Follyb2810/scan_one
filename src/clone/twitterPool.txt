@@ -1,0 +1,82 @@
+const axios = require('axios');
+const cheerio = require('cheerio');
+const notifier = require('node-notifier');
+
+const tweets = {};
+const N = [];
+
+const THandlers = [
+  {
+    name: 'WhaleWatch',
+    url: 'https://twitter.com/whalewatchio?lang=en',
+    keywords: 'long',
+  },
+];
+
+// Initialize tweets storage
+THandlers.forEach(handler => {
+  tweets[handler.url] = [];
+});
+
+// Helper to fetch and process a single Twitter page
+const fetchTweets = async (handler) => {
+  try {
+    const response = await axios.get(handler.url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+      },
+    });
+
+    const $ = cheerio.load(response.data);
+    const tweetSelector = 'div.js-tweet-text-container p'; // May need updating depending on Twitter DOM
+    const currentTweets = [];
+
+    $(tweetSelector).each((_, el) => {
+      currentTweets.push($(el).text());
+    });
+
+    const urlKey = handler.url;
+
+    if (!tweets[urlKey].length) {
+      tweets[urlKey] = currentTweets;
+    } else {
+      currentTweets.forEach((tweet) => {
+        if (!tweets[urlKey].includes(tweet)) {
+          tweets[urlKey].push(tweet);
+          const keywords = handler.keywords.split(',').map(k => k.trim());
+
+          const shouldNotify =
+            keywords.includes('*') || keywords.some(kw => tweet.includes(kw));
+
+          if (shouldNotify) {
+            N.push({
+              tweet,
+              name: handler.name,
+            });
+          }
+        }
+      });
+    }
+  } catch (err) {
+    console.error(`Error fetching ${handler.url}:`, err.message);
+  }
+};
+
+// Polling loop every 5 seconds
+setInterval(async () => {
+  await Promise.all(THandlers.map(fetchTweets));
+}, 5000);
+
+// Notification loop every 500ms
+setInterval(() => {
+  if (N.length) {
+    const next = N.shift();
+    notifier.notify({
+      title: next.name,
+      message: next.tweet,
+      sound: true,
+    });
+  }
+}, 500);

@@ -1,0 +1,109 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import FullCalendar from '@fullcal isendar/react';
+import dayGridPlugin from '@fullcalendar/daygrid';
+import { Container, TextField, Button, List, ListItem, Typography } from '@mui/material';
+
+const App = () => {
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [emails, setEmails] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [recipient, setRecipient] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+
+  useEffect(() => {
+    if (token) {
+      fetchEmails();
+      fetchEvents();
+    }
+  }, [token]);
+
+  const fetchEmails = async () => {
+    const res = await axios.get('http://localhost:5000/api/emails', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setEmails(res.data);
+  };
+
+  const fetchEvents = async () => {
+    const res = await axios.get('http://localhost:5000/api/events', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setEvents(res.data.map(event => ({
+      id: event._id,
+      title: event.title,
+      start: event.start,
+      end: event.end,
+    })));
+  };
+
+  const sendEmail = async () => {
+    await axios.post(
+      'http://localhost:5000/api/emails',
+      { recipient, subject, body },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    fetchEmails();
+    setRecipient('');
+    setSubject('');
+    setBody('');
+  };
+
+  const handleLogin = async () => {
+    const res = await axios.post('http://localhost:5000/api/users/login', {
+      email: 'test@example.com',
+      password: 'password',
+    });
+    setToken(res.data.token);
+    localStorage.setItem('token', res.data.token);
+  };
+
+  return (
+    <Container>
+      {!token ? (
+        <Button onClick={handleLogin}>Login</Button>
+      ) : (
+        <>
+          <Typography variant="h4">Email Client</Typography>
+          <TextField
+            label="Recipient"
+            value={recipient}
+            onChange={e => setRecipient(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            label="Subject"
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            label="Body"
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            multiline
+            rows={4}
+            fullWidth
+          />
+          <Button onClick={sendEmail}>Send Email</Button>
+          <List>
+            {emails.map(email => (
+              <ListItem key={email._id}>
+                {email.subject} - From: {email.sender}
+              </ListItem>
+            ))}
+          </List>
+          <Typography variant="h4">Calendar</Typography>
+          <FullCalendar
+            plugins={[dayGridPlugin]}
+            initialView="dayGridMonth"
+            events={events}
+          />
+        </>
+      )}
+    </Container>
+  );
+};
+
+export default App;

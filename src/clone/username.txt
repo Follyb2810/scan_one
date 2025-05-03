@@ -1,0 +1,189 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const { ethers } = require('ethers');
+const { Connection, PublicKey } = require('@solana/web3.js');
+const PinataSDK = require('@pinata/sdk');
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// MongoDB Connection
+mongoose.connect('mongodb://localhost:27017/web3_email_calendar', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+// Pinata Client
+const pinata = new PinataSDK({ pinataApiKey: 'your_pinata_api_key', pinataSecretApiKey: 'your_pinata_secret_key' });
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  walletAddress: { type: String, required: true, unique: true },
+  username: { type: String, unique: true },
+  chain: { type: String, enum: ['ethereum', 'polygon', 'solana'] },
+});
+const User = mongoose.model('User', userSchema);
+
+// Email Schema
+const emailSchema = new mongoose.Schema({
+  senderWallet: String,
+  recipientWallet: String,
+  subject: String,
+  bodyCid: String,
+  timestamp: { type: Date, default: Date.now },
+});
+const Email = mongoose.model('Email', emailSchema);
+
+// Event Schema
+const eventSchema = new mongoose.Schema({
+  userWallet: String,
+  title: String,
+  start: Date,
+  end: Date,
+  cid: String,
+});
+const Event = mongoose.model('Event', eventSchema);
+
+// Username Generation
+const adjectives = ['Quick', 'Brave', 'Silent', 'Bold', 'Wise', 'Swift', 'Calm', 'Fierce', 'Cool', 'Star'];
+const nouns = ['Fox', 'Wolf', 'Hawk', 'Bear', 'Lion', 'Deer', 'Viper', 'Eagle', 'Tiger', 'Shark'];
+
+const generateUsername = async () => {
+  let username;
+  const maxAttempts = 10; // Prevent infinite loops
+  let attempts = 0;
+
+  do {
+    const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const number = Math.floor(Math.random() * 1000); // 0-999
+    username = `${adjective}${noun}${number}`;
+    attempts++;
+  } while (await User.findOne({ username }) && attempts < maxAttempts);
+
+  if (attempts >= maxAttempts) {
+    throw new Error('Unable to generate unique username');
+  }
+
+  return username;
+};
+
+// Verify Ethereum/Polygon Signature
+const verifyEthSignature = async (walletAddress, signature, message) => {
+  const signer = ethers.utils.verifyMessage(message, signature);
+  return signer.toLowerCase() === walletAddress.toLowerCase();
+};
+
+// Verify Solana Signature (Placeholder)
+const verifySolanaSignature = async (walletAddress, signature, message) => {
+  // Implement Solana signature verification with @solana/web3.js
+  // Placeholder: Assume valid for now
+  return true;
+};
+
+// User Routes
+app.post('/api/users/register', async (req, res) => {
+  const { walletAddress, signature, chain } = req.body;
+  const message = 'Sign to register with Web3 Email';
+  
+  let isValid;
+  if (chain === 'solana') {
+    isValid = await verifySolanaSignature(walletAddress, signature, message);
+  } else {
+    isValid = await verifyEthSignature(walletAddress, signature, message);
+  }
+
+  if (!isValid) return res.status(401).json({ message: 'Invalid signature' });
+
+  try {
+    let user = await User.findOne({ walletAddress });
+    if (!user) {
+      const username = await generateUsername();
+      user = new User({ walletAddress, username, chain });
+      await user.save();
+    }
+    res.json({ username: user.username });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+app.post('/api/users/username', async (req, res) => {
+  const { walletAddress, newUsername } = req.body;
+  if (newUsername.length < 3 || newUsername.length > 20) {
+    return res.status(400).json({ message: 'Username must be 3-20 characters' });
+  }
+  if (await User.findOne({ username: newUsername })) {
+    return res.status(400).json({ message: 'Username taken' });
+  }
+  await User.updateOne({ walletAddress }, { username: newUsername });
+  res.json({ message: 'Username updated' });
+});
+
+// Email Routes
+app.post('/api/emails', async (req, res) => {
+  const { senderWallet, recipientUsername, subject, body } = req.body;
+  const recipient = await User.findOne({ username: recipientUsername });
+  if (!recipient) return res.status(404).json({ message: 'Recipient not found' });
+
+  const pinataResponse = await pinata.pinJSONToIPFS({ body }, {
+    pinataMetadata: { name: `email_${Date.now()}` },
+  });
+  const bodyCid = pinataResponse.IpfsHash;
+
+  const email = new Email({
+    senderWallet,
+    recipientWallet: recipient.walletAddress,
+    subject,
+    bodyCid,
+  });
+  await email.save();
+  res.status(201).json({ message: 'Email sent' });
+});
+
+app.get('/api/emails', async (req, res) => {
+  const { walletAddress } = req.query;
+  const emails = await Email.find({
+    $or: [{ senderWallet: walletAddress }, { recipientWallet: walletAddress }],
+  });
+  const emailsWithBody = await Promise.all(emails.map(async email => {
+    const response = await pinata.catJSON(email.bodyCid);
+    return { ...email._doc, body: response.body };
+  }));
+  res.json(emailsWithBody);
+});
+
+// Calendar Routes
+app.post('/api/events', async (req, res) => {
+  const { walletAddress, title, start, end } = req.body;
+  const eventData = { title, start, end };
+  
+  const pinataResponse = await pinata.pinJSONToIPFS(eventData, {
+    pinataMetadata: { name: `event_${Date.now()}` },
+  });
+  const cid = pinataResponse.IpfsHash;
+
+  const event = new Event({
+    userWallet: walletAddress,
+    title,
+    start,
+    end,
+    cid,
+  });
+  await event.save();
+  res.status(201).json({ message: 'Event created' });
+});
+
+app.get('/api/events', async (req, res) => {
+  const { walletAddress } = req.query;
+  const events = await Event.find({ userWallet: walletAddress });
+  const eventsWithDetails = await Promise.all(events.map(async event => {
+    const response = await pinata.catJSON(event.cid);
+    return { ...event._doc, details: response };
+  }));
+  res.json(eventsWithDetails);
+});
+
+app.listen(5000, () => console.log('Server running on port 5000'));

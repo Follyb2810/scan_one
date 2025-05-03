@@ -1,0 +1,171 @@
+## 🥇 Option 1: **Auth0 with Express + MongoDB** (Easier, more secure, less code)
+
+### 🔥 Why choose Auth0?
+- Built-in social login (Google, GitHub, Facebook, etc.)
+- Auth0 handles OAuth flows, sessions, and tokens
+- You verify JWTs in your Express backend
+- You store custom user data in MongoDB
+
+### 🧠 Flow:
+1. Frontend redirects user to Auth0 login (e.g. Google)
+2. Auth0 handles login and redirects back with a token
+3. Express verifies token and optionally saves user to MongoDB
+
+### 🔧 Setup Outline:
+
+#### 1. Create Auth0 App
+- Go to [https://auth0.com](https://auth0.com)
+- Create an application
+- Enable social providers under **Connections > Social**
+
+#### 2. Install packages
+
+```bash
+npm install express express-jwt jwks-rsa mongoose dotenv
+```
+
+#### 3. Create middleware to protect routes:
+
+```ts
+// middleware/checkJwt.ts
+import jwt from 'express-jwt';
+import jwksRsa from 'jwks-rsa';
+
+export const checkJwt = jwt({
+  secret: jwksRsa.expressJwtSecret({
+    cache: true,
+    rateLimit: true,
+    jwksRequestsPerMinute: 5,
+    jwksUri: `https://YOUR_DOMAIN/.well-known/jwks.json`,
+  }) as any,
+  audience: 'YOUR_API_IDENTIFIER',
+  issuer: `https://YOUR_DOMAIN/`,
+  algorithms: ['RS256'],
+});
+```
+
+#### 4. Use it in your routes:
+
+```ts
+import express from 'express';
+import { checkJwt } from './middleware/checkJwt';
+
+const app = express();
+
+app.get('/api/protected', checkJwt, (req, res) => {
+  res.send('You are authenticated!');
+});
+```
+
+#### 5. Save user data to MongoDB (optional)
+
+When the token is verified, you get `req.user.sub` (Auth0 user ID). Use that to find or create a user in MongoDB.
+
+---
+
+## 🥈 Option 2: **Passport.js with Express + MongoDB** (DIY control)
+
+### ⚙️ Why choose Passport.js?
+- Total control over flow, UI, storage
+- Integrates directly with Express
+- Good for learning or fully custom apps
+
+### ✨ What you need:
+- `passport`
+- Strategy for each provider (e.g., `passport-google-oauth20`)
+- Session or JWT support
+- MongoDB to store user records
+
+### 🔧 Setup Example (Google Login):
+
+#### 1. Install packages
+
+```bash
+npm install express passport passport-google-oauth20 express-session mongoose dotenv
+```
+
+#### 2. Configure Passport
+
+```ts
+// config/passport.ts
+import passport from 'passport';
+import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
+import { UserModel } from './models/User'; // your Mongoose model
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      callbackURL: '/auth/google/callback',
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      let user = await UserModel.findOne({ googleId: profile.id });
+      if (!user) {
+        user = await UserModel.create({
+          googleId: profile.id,
+          name: profile.displayName,
+          email: profile.emails?.[0].value,
+        });
+      }
+      return done(null, user);
+    }
+  )
+);
+
+passport.serializeUser((user: any, done) => {
+  done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+  const user = await UserModel.findById(id);
+  done(null, user);
+});
+```
+
+#### 3. Add routes
+
+```ts
+// routes/auth.ts
+import express from 'express';
+import passport from 'passport';
+
+const router = express.Router();
+
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+router.get(
+  '/google/callback',
+  passport.authenticate('google', {
+    failureRedirect: '/login',
+    successRedirect: '/dashboard',
+  })
+);
+
+export default router;
+```
+
+#### 4. Use session and Passport in main app:
+
+```ts
+import express from 'express';
+import passport from 'passport';
+import session from 'express-session';
+import './config/passport'; // import the setup
+import authRoutes from './routes/auth';
+
+const app = express();
+
+app.use(
+  session({
+    secret: 'keyboard cat',
+    resave: false,
+    saveUninitialized: false,
+  })
+);
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+app.use('/auth', authRoutes);
+```

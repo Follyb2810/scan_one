@@ -1,0 +1,288 @@
+If you're looking for alternatives to Keycloak for your TikTok clone app built with Express.js and MongoDB, there are several authentication solutions that can handle Google, Facebook, email/password, and potentially QR code login. Each has its strengths depending on your needs (e.g., simplicity, scalability, or prebuilt features). Below, I’ll recommend a few options beyond Keycloak and Passport.js (which I’ve already covered), and provide an example using one of them—**Firebase Authentication**—since it’s widely used, easy to integrate, and supports your requirements well.
+
+---
+
+### Alternative Authentication Options
+1. **Firebase Authentication**  
+   - **Why?**: Simple setup, supports Google, Facebook, email/password, and custom tokens (for QR code login). Fully managed by Google, with client-side SDKs for Android/iOS.
+   - **Pros**: No server management, built-in UI, scalable, integrates with Firebase storage/firestore for videos.
+   - **Cons**: Ties you to Google’s ecosystem, less control over the backend.
+
+2. **Auth0**  
+   - **Why?**: Enterprise-grade, supports social logins (Google, Facebook), email/password, and custom flows. Similar to Keycloak but hosted.
+   - **Pros**: Easy to use, prebuilt login UI, extensive customization.
+   - **Cons**: Free tier has limits; paid plans can get expensive.
+
+3. **Supabase Auth**  
+   - **Why?**: Open-source alternative to Firebase, supports Google, Facebook, email/password, and custom tokens.
+   - **Pros**: Self-hostable, integrates with PostgreSQL, lightweight.
+   - **Cons**: Younger ecosystem, less mature than Firebase or Auth0.
+
+4. **Okta**  
+   - **Why?**: Enterprise-focused, supports all your required auth methods with strong security features.
+   - **Pros**: Robust, highly customizable, good for scaling.
+   - **Cons**: Overkill for small projects, complex setup.
+
+5. **Custom JWT with Social APIs**  
+   - **Why?**: Build everything manually using Google/Facebook OAuth APIs, JWT, and MongoDB.
+   - **Pros**: Full control, no external dependencies.
+   - **Cons**: Time-consuming, requires manual security implementation.
+
+---
+
+### Recommendation: Firebase Authentication
+I’d recommend **Firebase Authentication** for your TikTok clone because:
+- It’s beginner-friendly and quick to set up.
+- Supports Google, Facebook, email/password out of the box.
+- Can be extended for QR code login using custom tokens.
+- Integrates seamlessly with Android/iOS and Express.js.
+- Pairs well with Firebase Storage for video streaming (replacing AWS S3 if desired).
+
+Below, I’ll show you how to implement it with Express.js and MongoDB.
+
+---
+
+### Step 1: Set Up Firebase Authentication
+1. **Create a Firebase Project**:
+   - Go to [Firebase Console](https://console.firebase.google.com/).
+   - Create a new project (e.g., `tiktok-clone`).
+   - Enable Authentication: Go to "Authentication" → "Sign-in methods" → Enable Google, Facebook, and Email/Password.
+
+2. **Get Firebase Config**:
+   - In "Project Settings," add a web app and copy the Firebase config object (e.g., `apiKey`, `authDomain`).
+
+3. **Get Service Account Key** (for backend):
+   - Go to "Project Settings" → "Service Accounts" → Generate a new private key (JSON file). Save it as `serviceAccountKey.json`.
+
+---
+
+### Step 2: Express.js Integration
+#### Install Dependencies
+```bash
+npm install express mongoose firebase-admin firebase qrcode
+```
+
+#### Update `app.js`
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const admin = require('firebase-admin');
+require('dotenv').config();
+
+const app = express();
+app.use(express.json());
+
+// Initialize Firebase Admin
+const serviceAccount = require('./serviceAccountKey.json');
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+// MongoDB connection
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.log(err));
+
+// Routes
+app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/videos', require('./routes/videoRoutes'));
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+```
+
+#### Update `.env`
+```
+MONGO_URI=mongodb://localhost:27017/tiktok_clone
+```
+
+---
+
+### Step 3: User Model (`models/User.js`)
+```javascript
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  firebaseUid: { type: String, unique: true }, // Firebase UID
+  username: { type: String, required: true },
+  email: { type: String },
+  qrCode: { type: String }, // For QR login
+  profilePic: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+---
+
+### Step 4: Authentication Routes (`routes/authRoutes.js`)
+#### Google, Facebook, Email/Password (Client-Side)
+Firebase Authentication is typically handled client-side (Android/iOS), but the backend verifies tokens and syncs users with MongoDB.
+
+**Middleware** (`middleware/auth.js`):
+```javascript
+const admin = require('firebase-admin');
+
+module.exports = async (req, res, next) => {
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ message: 'No token provided' });
+
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(401).json({ message: 'Invalid token' });
+  }
+};
+```
+
+**Sync User** (`controllers/authController.js`):
+```javascript
+const User = require('../models/User');
+
+exports.syncUser = async (req, res) => {
+  const { uid, email, displayName, photoURL } = req.user; // From Firebase token
+  try {
+    let user = await User.findOne({ firebaseUid: uid });
+    if (!user) {
+      user = new User({
+        firebaseUid: uid,
+        username: displayName || `user_${uid}`,
+        email,
+        profilePic: photoURL || ''
+      });
+      await user.save();
+    }
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+```
+
+**Routes**:
+```javascript
+const express = require('express');
+const { syncUser } = require('../controllers/authController');
+const authMiddleware = require('../middleware/auth');
+const router = express.Router();
+
+router.get('/sync', authMiddleware, syncUser);
+
+module.exports = router;
+```
+
+#### QR Code Login
+**Controller** (`controllers/authController.js` - Add to existing file):
+```javascript
+const QRCode = require('qrcode');
+const admin = require('firebase-admin');
+
+exports.generateQR = async (req, res) => {
+  const { uid } = req.user; // From Firebase token
+  try {
+    const user = await User.findOne({ firebaseUid: uid });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const qrToken = await admin.auth().createCustomToken(uid, { expiresIn: '5m' });
+    user.qrCode = qrToken;
+    await user.save();
+
+    const qrCodeUrl = await QRCode.toDataURL(qrToken);
+    res.json({ qrCodeUrl });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.verifyQR = async (req, res) => {
+  const { qrToken } = req.body;
+  try {
+    const decoded = await admin.auth().verifyIdToken(qrToken);
+    const user = await User.findOne({ firebaseUid: decoded.uid });
+    if (!user || user.qrCode !== qrToken) {
+      return res.status(401).json({ message: 'Invalid QR code' });
+    }
+    user.qrCode = null; // Invalidate after use
+    await user.save();
+
+    const token = await admin.auth().createCustomToken(decoded.uid);
+    res.json({ token });
+  } catch (error) {
+    res.status(401).json({ error: error.message });
+  }
+};
+```
+
+**Routes** (`routes/authRoutes.js` - Add to existing file):
+```javascript
+const { generateQR, verifyQR } = require('../controllers/authController');
+
+router.get('/qr', authMiddleware, generateQR);
+router.post('/qr/verify', verifyQR);
+```
+
+---
+
+### Step 5: Frontend Integration (Android/iOS)
+#### Firebase Client Setup
+- Install Firebase SDK:
+  - **Android**: Add to `build.gradle` (`implementation 'com.google.firebase:firebase-auth'`) and initialize with your config.
+  - **iOS**: Install via CocoaPods (`pod 'Firebase/Auth'`) and initialize.
+
+#### Google Login
+```javascript
+// React Native example (works for Android/iOS)
+import auth from '@react-native-firebase/auth';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+
+GoogleSignin.configure({ webClientId: 'your_web_client_id' });
+
+async function signInWithGoogle() {
+  const { idToken } = await GoogleSignin.signIn();
+  const googleCredential = auth.GoogleAuthProvider.credential(idToken);
+  const userCredential = await auth().signInWithCredential(googleCredential);
+  const token = await userCredential.user.getIdToken();
+  // Send token to /api/auth/sync
+}
+```
+
+#### Facebook Login
+```javascript
+import { LoginManager, AccessToken } from 'react-native-fbsdk-next';
+
+async function signInWithFacebook() {
+  const result = await LoginManager.logInWithPermissions(['public_profile', 'email']);
+  if (!result.isCancelled) {
+    const data = await AccessToken.getCurrentAccessToken();
+    const facebookCredential = auth.FacebookAuthProvider.credential(data.accessToken);
+    const userCredential = await auth().signInWithCredential(facebookCredential);
+    const token = await userCredential.user.getIdToken();
+    // Send token to /api/auth/sync
+  }
+}
+```
+
+#### Email/Password
+```javascript
+async function signInWithEmail(email, password) {
+  const userCredential = await auth().signInWithEmailAndPassword(email, password);
+  const token = await userCredential.user.getIdToken();
+  // Send token to /api/auth/sync
+}
+```
+
+#### QR Code
+- Fetch QR code from `/api/auth/qr`, display it, scan it, and send the token to `/api/auth/qr/verify`.
+
+---
+
+### Why Firebase Over Others?
+- **Ease of Use**: Minimal backend setup compared to Keycloak or Auth0.
+- **Client-Side Focus**: Perfect for mobile apps (Android/iOS).
+- **Free Tier**: Generous limits for small projects.
+- **Extensibility**: Custom tokens enable QR code login.
+
+If Firebase doesn’t suit you, **Auth0** is a great hosted alternative with similar ease, or **Supabase** if you prefer open-source and self-hosting. Let me know if you’d like an example with one of these instead!

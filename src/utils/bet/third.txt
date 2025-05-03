@@ -1,0 +1,877 @@
+//= The Odds API, OddsMatrix, or SportsDataIO
+
+To enhance your minimal sports betting app (built with **Express.js**, **MongoDB**, **React Native**) by incorporating **real-time odds**, **payment processing**, and **live streaming or in-game betting** instead of static data and simulated features, you’ll need to integrate third-party APIs and services. These additions significantly increase complexity, cost, and legal considerations compared to the MVP described earlier. Below, I’ll provide a detailed guide on how to source and implement these features, leveraging your existing tech stack, while addressing each requirement practically. I’ll include steps to select providers, integrate their APIs, and update your app’s backend and frontend, along with code artifacts where necessary. I’ll also highlight legal and responsible gambling considerations, as these are critical for real-money betting apps.
+
+---
+
+### **Overview of Requirements and Approach**
+
+1. **Real-Time Odds**:
+   - Replace static event data with dynamic odds from a sports betting API.
+   - Integrate a provider like **The Odds API**, **OddsMatrix**, or **SportsDataIO** for real-time odds data.
+   - Update the backend to fetch and store odds, and the frontend to display them.
+
+2. **Payment Processing**:
+   - Replace the simulated wallet with real payment processing for deposits and withdrawals.
+   - Integrate a payment gateway like **Stripe** or **PayPal** for secure transactions.
+   - Update the backend to handle transactions and the frontend to include payment forms.
+
+3. **Live Streaming or In-Game Betting**:
+   - Add **in-game betting** (real-time bet placement during events) as it’s more feasible than live streaming for an MVP.
+   - Use the same odds API for in-play odds and update the app to support dynamic bet placement.
+   - Note: Live streaming requires complex infrastructure (e.g., Dolby.io, AWS Media Services) and is cost-prohibitive for a minimal app, so I’ll focus on in-game betting but provide guidance if you prefer streaming.
+
+**Constraints**:
+- Your tech stack (Express.js, MongoDB, React Native) is suitable but needs scalability enhancements (e.g., caching, WebSockets).
+- Real-money betting requires **legal compliance** (e.g., licenses, geolocation, KYC).
+- Costs for APIs and services range from $100–$5,000/month, depending on usage.
+
+**Legal Note**: Real-money betting apps must comply with state-specific gambling laws (e.g., 21+ age restrictions, licenses in states like NJ, PA). Consult a legal expert and integrate compliance tools (e.g., geolocation, KYC). For responsible gambling support, contact the National Problem Gambling Helpline at 1-800-522-4700.
+
+---
+
+### **Step-by-Step Implementation**
+
+#### **1. Real-Time Odds**
+
+##### **Sourcing Real-Time Odds**
+You need a sports betting API that provides real-time odds for pre-match and in-play events. Based on recent data, here are top providers suitable for your needs:
+
+- **The Odds API** (the-odds-api.com):
+  - **Features**: Real-time odds for NFL, NBA, MLB, NHL, soccer, and more from 250+ sportsbooks (e.g., FanDuel, DraftKings). Supports moneyline, spreads, totals, and player props. Returns JSON data with sub-10s latency.[](https://the-odds-api.com/)[](https://x.com/oddsapi_io/status/1913313202550497493)
+  - **Pricing**: Free trial (500 requests/month); paid plans start at $30/month (2,000 requests). Each API call (e.g., fetching NBA moneyline odds) counts as one request.[](https://the-odds-api.com/)
+  - **Why Choose**: Affordable, easy integration, comprehensive U.S. coverage.
+
+- **OddsMatrix** (oddsmatrix.com):
+  - **Features**: Covers 75+ sports, 20+ esports, with pre-live and live odds, stats, and settlements. High accuracy and low latency.[](https://oddsmatrix.com/)[](https://oddsmatrix.com/odds-service/live-sports/)
+  - **Pricing**: Custom pricing (typically $1,000+/month for smaller operators). Contact for quotes.[](https://oddsmatrix.com/)
+  - **Why Choose**: Robust for enterprise needs but may be overkill for an MVP.
+
+- **SportsDataIO** (sportsdata.io):
+  - **Features**: Live odds, historical data, player props, and futures from major U.S. sportsbooks. Includes real-time updates and line movement timestamps.[](https://sportsdata.io/live-odds-api)
+  - **Pricing**: Starts at ~$500/month (varies by plan). Free trial available.[](https://sportsdata.io/live-odds-api)
+  - **Why Choose**: Strong for U.S. sports but pricier than The Odds API.
+
+- **OpticOdds** (opticodds.com):
+  - **Features**: Real-time odds from 200+ sportsbooks, including props and alternate markets. Processes 1M+ odds/second with JSON/XML output.[](https://opticodds.com/sports-betting-api)[](https://opticodds.com/)
+  - **Pricing**: Custom pricing (~$500–$5,000/month). Free trial available.[](https://opticodds.com/sports-betting-api)
+  - **Why Choose**: Fast and comprehensive but expensive.
+
+**Recommendation**: Start with **The Odds API** for its affordability, ease of integration, and U.S. sports coverage. It’s ideal for an MVP and aligns with your budget and technical skills.
+
+##### **Integration Steps**
+
+1. **Sign Up and Get API Key**:
+   - Register at the-odds-api.com and get a free API key (500 requests/month).
+   - Upgrade to a paid plan ($30/month) for higher quotas if needed.
+
+2. **Update Backend (Express.js)**:
+   - Replace the static event data in `routes/events.js` with API calls to The Odds API.
+   - Store fetched odds in MongoDB for caching (to reduce API calls and costs).
+   - Add a new endpoint to fetch in-play odds for in-game betting.
+
+```javascript
+const express = require('express');
+const axios = require('axios');
+const Event = require('../models/Event');
+const router = express.Router();
+
+// Get real-time odds from The Odds API
+router.get('/', async (req, res) => {
+  try {
+    // Fetch odds from The Odds API
+    const response = await axios.get('https://api.the-odds-api.com/v4/sports/upcoming/odds', {
+      params: {
+        apiKey: process.env.ODDS_API_KEY,
+        regions: 'us',
+        markets: 'h2h', // Moneyline odds
+        oddsFormat: 'american',
+      },
+    });
+
+    // Map API data to Event model
+    const events = response.data.map(event => ({
+      sport: event.sport_title,
+      team1: event.home_team,
+      team2: event.away_team,
+      odds1: event.bookmakers[0]?.markets[0]?.outcomes.find(o => o.name === event.home_team)?.price || 0,
+      odds2: event.bookmakers[0]?.markets[0]?.outcomes.find(o => o.name === event.away_team)?.price || 0,
+      date: new Date(event.commence_time),
+    }));
+
+    // Save to MongoDB (overwrite existing events)
+    await Event.deleteMany({});
+    await Event.insertMany(events);
+
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Error fetching odds' });
+  }
+});
+
+// Get in-play odds for in-game betting
+router.get('/inplay', async (req, res) => {
+  try {
+    const response = await axios.get('https://api.the-odds-api.com/v4/sports/upcoming/odds', {
+      params: {
+        apiKey: process.env.ODDS_API_KEY,
+        regions: 'us',
+        markets: 'h2h',
+        oddsFormat: 'american',
+      },
+    });
+
+    // Filter for in-play events (commence_time < current time)
+    const inplayEvents = response.data
+      .filter(event => new Date(event.commence_time) < new Date())
+      .map(event => ({
+        sport: event.sport_title,
+        team1: event.home_team,
+        team2: event.away_team,
+        odds1: event.bookmakers[0]?.markets[0]?.outcomes.find(o => o.name === event.home_team)?.price || 0,
+        odds2: event.bookmakers[0]?.markets[0]?.outcomes.find(o => o.name === event.away_team)?.price || 0,
+        date: new Date(event.commence_time),
+      }));
+
+    res.json(inplayEvents);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Error fetching in-play odds' });
+  }
+});
+
+module.exports = router;
+```
+
+3. **Update .env**:
+   - Add your Odds API key to `.env`.
+
+
+MONGO_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/betting-app?retryWrites=true&w=majority
+JWT_SECRET=your_jwt_secret
+PORT=5000
+ODDS_API_KEY=your_odds_api_key
+
+
+4. **Install Axios**:
+   - Run: `npm install axios` in the backend directory.
+
+5. **Update Frontend (React Native)**:
+   - Modify `HomeScreen.js` to fetch and display real-time odds.
+   - Add a new tab or screen for in-play odds (see in-game betting section).
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
+import axios from 'axios';
+import EventCard from '../components/EventCard';
+
+export default function HomeScreen({ navigation }) {
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    const fetchEvents = async () => {
+      try {
+        const res = await axios.get('http://localhost:5000/api/events');
+        setEvents(res.data);
+      } catch (err) {
+        alert('Error fetching events');
+      }
+    };
+    fetchEvents();
+    // Refresh odds every 30 seconds
+    const interval = setInterval(fetchEvents, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Sports Events</Text>
+      <FlatList
+        data={events}
+        keyExtractor={item => item._id}
+        renderItem={({ item }) => (
+          <EventCard event={item} onBet={() => navigation.navigate('Bet Slip', { event })} />
+        )}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center', color: '#000' },
+});
+```
+
+6. **Testing**:
+   - Test `/api/events` with Postman to ensure real odds are returned.
+   - Verify the frontend displays dynamic odds and refreshes every 30 seconds.
+   - Check API usage in The Odds API dashboard to avoid exceeding quotas.
+
+**Cost**: ~$30–$100/month for The Odds API, depending on request volume.
+
+---
+
+#### **2. Payment Processing**
+
+##### **Sourcing Payment Processing**
+To handle real deposits and withdrawals, integrate a payment gateway. Popular options for betting apps include:
+
+- **Stripe** (stripe.com):
+  - **Features**: Supports card payments, ACH, Apple Pay, and more. Provides APIs for payments, payouts, and subscriptions. High security with PCI compliance.[](https://deadspin.com/betting-payment-methods/)
+  - **Pricing**: 2.9% + $0.30 per transaction. No monthly fees.[](https://deadspin.com/betting-payment-methods/)
+  - **Why Choose**: Easy integration, global support, and betting-friendly (with approval).
+
+- **PayPal** (paypal.com):
+  - **Features**: Supports e-wallet payments, cards, and Venmo. Trusted by users, with fast deposits/withdrawals.[](https://deadspin.com/betting-payment-methods/)
+  - **Pricing**: 2.9% + $0.49 per transaction.[](https://deadspin.com/betting-payment-methods/)
+  - **Why Choose**: User familiarity, but stricter approval for gambling.
+
+- **Corefy** (corefy.com):
+  - **Features**: Specialized for high-risk industries like betting. Supports cards, crypto, and global methods (e.g., UPI, Pix).[](https://corefy.com/glossary/betting-payment-processing)
+  - **Pricing**: Custom quotes (~2–4% per transaction).[](https://corefy.com/glossary/betting-payment-processing)
+  - **Why Choose**: Betting-focused but less beginner-friendly.
+
+**Recommendation**: Use **Stripe** for its ease of integration, reasonable fees, and developer-friendly APIs. Note that betting is considered high-risk, so you’ll need to apply for a merchant account and disclose your business model.
+
+##### **Integration Steps**
+
+1. **Set Up Stripe Account**:
+   - Sign up at stripe.com and complete the business verification process.
+   - Obtain API keys (publishable and secret) from the Stripe dashboard.
+   - Ensure your app complies with Stripe’s gambling policy (e.g., licensed operation).
+
+2. **Update Backend (Express.js)**:
+   - Install Stripe SDK: `npm install stripe`.
+   - Add routes for creating payment intents (deposits) and processing payouts (withdrawals).
+   - Update the User model to store Stripe customer IDs and transaction history.
+
+```javascript
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  balance: { type: Number, default: 0 }, // Real balance
+  stripeCustomerId: { type: String }, // Stripe customer ID
+  transactions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Transaction' }],
+});
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+```javascript
+const mongoose = require('mongoose');
+
+const transactionSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  amount: { type: Number, required: true },
+  type: { type: String, enum: ['deposit', 'withdrawal'], required: true },
+  stripePaymentId: { type: String, required: true },
+  status: { type: String, default: 'completed' },
+  createdAt: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model('Transaction', transactionSchema);
+```
+
+```javascript
+const express = require('express');
+const Stripe = require('stripe');
+const auth = require('../middleware/auth');
+const User = require('../models/User');
+const Transaction = require('../models/Transaction');
+const router = express.Router();
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+// Create payment intent for deposit
+router.post('/deposit', auth, async (req, res) => {
+  const { amount } = req.body; // Amount in USD
+  try {
+    let user = await User.findById(req.user.userId);
+    if (!user.stripeCustomerId) {
+      const customer = await stripe.customers.create({
+        email: user.username + '@example.com',
+      });
+      user.stripeCustomerId = customer.id;
+      await user.save();
+    }
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount * 100, // Convert to cents
+      currency: 'usd',
+      customer: user.stripeCustomerId,
+      payment_method_types: ['card'],
+    });
+
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    res.status(500).json({ msg: 'Payment error' });
+  }
+});
+
+// Confirm deposit and update balance
+router.post('/deposit/confirm', auth, async (req, res) => {
+  const { paymentIntentId, amount } = req.body;
+  try {
+    const user = await User.findById(req.user.userId);
+    const transaction = new Transaction({
+      userId: user._id,
+      amount,
+      type: 'deposit',
+      stripePaymentId: paymentIntentId,
+    });
+    await transaction.save();
+
+    user.balance += amount;
+    user.transactions.push(transaction._id);
+    await user.save();
+
+    res.json({ msg: 'Deposit successful' });
+  } catch (err) {
+    res.status(500).json({ msg: 'Error confirming deposit' });
+  }
+});
+
+module.exports = router;
+```
+
+3. **Update server.js**:
+   - Add the payments route.
+
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+require('dotenv').config();
+const authRoutes = require('./routes/auth');
+const eventRoutes = require('./routes/events');
+const betRoutes = require('./routes/bets');
+const paymentRoutes = require('./routes/payments');
+
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/bets', betRoutes);
+app.use('/api/payments', paymentRoutes);
+
+// Mock geolocation endpoint (replace with real geolocation later)
+app.get('/api/geolocation', (req, res) => {
+  res.json({ state: 'NJ', allowed: true });
+});
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error(err));
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+```
+
+4. **Update .env**:
+   - Add your Stripe secret key.
+
+
+MONGO_URI=mongodb+srv://<username>:<password>@cluster0.mongodb.net/betting-app?retryWrites=true&w=majority
+JWT_SECRET=your_jwt_secret
+PORT=5000
+ODDS_API_KEY=your_odds_api_key
+STRIPE_SECRET_KEY=your_stripe_secret_key
+
+
+5. **Update Frontend (React Native)**:
+   - Install Stripe React Native SDK: `npm install @stripe/stripe-react-native`.
+   - Add a deposit screen to collect card details and process payments.
+
+```javascript
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, StyleSheet, Alert } from 'react-native';
+import { CardField, useStripe } from '@stripe/stripe-react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function DepositScreen({ navigation }) {
+  const { confirmPayment } = useStripe();
+  const [amount, setAmount] = useState('');
+
+  const handleDeposit = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const res = await axios.post(
+        'http://localhost:5000/api/payments/deposit',
+        { amount: parseFloat(amount) },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const { clientSecret } = res.data;
+      const { error, paymentIntent } = await confirmPayment(clientSecret, {
+        paymentMethodType: 'Card',
+      });
+
+      if (error) {
+        Alert.alert('Payment failed', error.message);
+        return;
+      }
+
+      await axios.post(
+        'http://localhost:5000/api/payments/deposit/confirm',
+        { paymentIntentId: paymentIntent.id, amount: parseFloat(amount) },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      Alert.alert('Success', 'Deposit successful');
+      navigation.navigate('Profile');
+    } catch (err) {
+      Alert.alert('Error', err.response?.data?.msg || 'Deposit failed');
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Deposit Funds</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Amount (USD)"
+        value={amount}
+        onChangeText={setAmount}
+        keyboardType="numeric"
+      />
+      <CardField
+        postalCodeEnabled={false}
+        placeholders={{ number: '4242 4242 4242 4242' }}
+        cardStyle={{ backgroundColor: '#fff', textColor: '#000' }}
+        style={styles.cardField}
+      />
+      <Button title="Deposit" onPress={handleDeposit} color="#007bff" />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center', color: '#000' },
+  input: { borderWidth: 1, borderColor: '#ccc', padding: 10, marginBottom: 10, borderRadius: 5 },
+  cardField: { height: 50, marginBottom: 20 },
+});
+```
+
+6. **Update Navigation**:
+   - Add the Deposit screen to `AppNavigator.js`.
+
+```javascript
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabsNavigator } from '@react-navigation/bottom-tabs';
+import LoginScreen from '../screens/LoginScreen';
+import RegisterScreen from '../screens/RegisterScreen';
+import HomeScreen from '../screens/HomeScreen';
+import BetSlipScreen from '../screens/BetSlipScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+import DepositScreen from '../screens/DepositScreen';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabsNavigator();
+
+function MainTabs() {
+  return (
+    <Tab.Navigator>
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="Bet Slip" component={BetSlipScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Deposit" component={DepositScreen} />
+    </Tab.Navigator>
+  );
+}
+
+export default function AppNavigator() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Login">
+        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Register" component={RegisterScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+```
+
+7. **Testing**:
+   - Test deposits with Stripe’s test cards (e.g., 4242 4242 4242 4242).
+   - Verify balance updates in the profile screen.
+   - Check transaction history in MongoDB.
+
+**Cost**: 2.9% + $0.30 per transaction. No upfront costs.
+
+**Compliance**: Implement KYC (e.g., via Stripe Identity) and ensure your app is licensed in target states.
+
+---
+
+#### **3. In-Game Betting (Preferred over Live Streaming)**
+
+##### **Why In-Game Betting?**
+- **Live Streaming**: Requires high-cost infrastructure (e.g., Dolby.io, AWS Media Services) and rights to stream sports events, costing $10,000+/month. It’s impractical for an MVP due to complexity and licensing.[](https://dolby.io/solutions/sports-betting/)
+- **In-Game Betting**: Feasible with The Odds API, which provides in-play odds. It enhances user engagement without the overhead of streaming.[](https://the-odds-api.com/)
+
+##### **Sourcing In-Game Betting Data**
+- **The Odds API**: Supports in-play odds for live events (e.g., NFL, NBA). The `/inplay` endpoint in `routes/events.js` filters for live games.[](https://the-odds-api.com/)
+- **Alternative Providers**: OddsMatrix, SportsDataIO, or OpticOdds also offer in-play odds but are pricier.[](https://oddsmatrix.com/)[](https://sportsdata.io/live-odds-api)[](https://opticodds.com/sports-betting-api)
+
+##### **Integration Steps**
+
+1. **Backend**:
+   - The `/api/events/inplay` endpoint (added above) fetches in-play odds.
+   - Update the Bet model to include a `type` field (pre-match or in-play).
+
+```javascript
+const mongoose = require('mongoose');
+
+const betSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  eventId: { type: mongoose.Schema.Types.ObjectId, ref: 'Event', required: true },
+  amount: { type: Number, required: true },
+  selection: { type: String, required: true },
+  type: { type: String, enum: ['pre-match', 'in-play'], default: 'pre-match' },
+  status: { type: String, default: 'pending' },
+});
+
+module.exports = mongoose.model('Bet', betSchema);
+```
+
+2. **Update Bet Route**:
+   - Modify `routes/bets.js` to handle in-play bets and verify funds.
+
+```javascript
+const express = require('express');
+const auth = require('../middleware/auth');
+const Bet = require('../models/Bet');
+const User = require('../models/User');
+const router = express.Router();
+
+// Place a bet
+router.post('/', auth, async (req, res) => {
+  const { eventId, amount, selection, type } = req.body; // Add type (pre-match or in-play)
+  try {
+    const user = await User.findById(req.user.userId);
+    if (user.balance < amount) return res.status(400).json({ msg: 'Insufficient balance' });
+
+    const bet = new Bet({
+      userId: req.user.userId,
+      eventId,
+      amount,
+      selection,
+      type: type || 'pre-match',
+    });
+    await bet.save();
+
+    user.balance -= amount;
+    await user.save();
+
+    res.json(bet);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get user bets
+router.get('/', auth, async (req, res) => {
+  try {
+    const bets = await Bet.find({ userId: req.user.userId }).populate('eventId');
+    res.json(bets);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+module.exports = router;
+```
+
+3. **Frontend**:
+   - Add an “In-Play” tab to display live events.
+   - Update `BetSlipScreen.js` to support in-play bets.
+
+```javascript
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabsNavigator } from '@react-navigation/bottom-tabs';
+import LoginScreen from '../screens/LoginScreen';
+import RegisterScreen from '../screens/RegisterScreen';
+import HomeScreen from '../screens/HomeScreen';
+import BetSlipScreen from '../screens/BetSlipScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+import DepositScreen from '../screens/DepositScreen';
+import InPlayScreen from '../screens/InPlayScreen';
+
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabsNavigator();
+
+function MainTabs() {
+  return (
+    <Tab.Navigator>
+      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen name="In-Play" component={InPlayScreen} />
+      <Tab.Screen name="Bet Slip" component={BetSlipScreen} />
+      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen name="Deposit" component={DepositScreen} />
+    </Tab.Navigator>
+  );
+}
+
+export default function AppNavigator() {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Login">
+        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Register" component={RegisterScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="Main" component={MainTabs} options={{ headerShown: false }} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+```
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
+import axios from 'axios';
+import EventCard from '../components/EventCard';
+
+export default function InPlayScreen({ navigation }) {
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    const fetchInPlayEvents = async () => {
+      try {
+        const res = await axios.get('http://localhost:5000/api/events/inplay');
+        setEvents(res.data);
+      } catch (err) {
+        alert('Error fetching in-play events');
+      }
+    };
+    fetchInPlayEvents();
+    const interval = setInterval(fetchInPlayEvents, 10000); // Refresh every 10 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>In-Play Events</Text>
+      <FlatList
+        data={events}
+        keyExtractor={item => item._id}
+        renderItem={({ item }) => (
+          <EventCard event={item} onBet={() => navigation.navigate('Bet Slip', { event, type: 'in-play' })} />
+        )}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center', color: '#000' },
+});
+```
+
+```javascript
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, StyleSheet } from 'react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export default function BetSlipScreen({ route, navigation }) {
+  const { event, type = 'pre-match' } = route.params;
+  const [amount, setAmount] = useState('');
+  const [selection, setSelection] = useState(event.team1);
+
+  const handleBet = async () => {
+    try {
+      const geoRes = await axios.get('http://localhost:5000/api/geolocation');
+      if (!geoRes.data.allowed) return alert('Betting not allowed in your state');
+
+      const token = await AsyncStorage.getItem('token');
+      await axios.post(
+        'http://localhost:5000/api/bets',
+        { eventId: event._id, amount: parseFloat(amount), selection, type },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      alert('Bet placed!');
+      navigation.navigate('Profile');
+    } catch (err) {
+      alert(err.response.data.msg);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>{type === 'in-play' ? 'In-Play Bet' : 'Place Bet'}</Text>
+      <Text style={styles.text}>{`${event.team1} vs ${event.team2}`}</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Bet Amount"
+        value={amount}
+        onChangeText={setAmount}
+        keyboardType="numeric"
+      />
+      <Text style={styles.text}>Select Team:</Text>
+      <View style={styles.buttonContainer}>
+        <Button title={event.team1} onPress={() => setSelection(event.team1)} color="#007bff" />
+        <Button title={event.team2} onPress={() => setSelection(event.team2)} color="#007bff" />
+      </View>
+      <Button title="Confirm Bet" onPress={handleBet} color="#007bff" />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
+  title: { fontSize: 24, marginBottom: 20, textAlign: 'center', color: '#000' },
+  text: { fontSize: 14, color: '#000', marginBottom: 10 },
+  input: { borderWidth: 1, borderColor: '#ccc', padding: 10, marginBottom: 10, borderRadius: 5 },
+  buttonContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+});
+```
+
+4. **Testing**:
+   - Verify in-play events appear in the “In-Play” tab with real-time odds.
+   - Place an in-play bet and check it’s marked as `in-play` in MongoDB.
+   - Ensure odds refresh every 10 seconds without UI lag.
+
+**Cost**: Included in The Odds API subscription (~$30–$100/month).
+
+---
+
+#### **4. Live Streaming (Optional Alternative)**
+
+If you prefer live streaming over in-game betting, here’s a brief guide, though it’s less practical for an MVP:
+
+- **Provider**: **Dolby.io** (dolby.io) offers real-time streaming with sub-500ms latency, ideal for betting.[](https://dolby.io/solutions/sports-betting/)
+- **Integration**:
+  - Use Dolby Millicast for WebRTC streaming.
+  - Integrate with a sports content provider (e.g., Sportradar) for stream rights.[](https://betradar.com/)
+  - Add a video player to React Native (e.g., `react-native-video`).
+- **Challenges**:
+  - **Cost**: $10,000+/month for streaming infrastructure and content licenses.
+  - **Complexity**: Requires AWS Media Services or similar for scalability.
+  - **Legal**: Must secure streaming rights per sport/league.
+- **Recommendation**: Defer live streaming until your app scales, as it’s cost-prohibitive and complex. Focus on in-game betting for now.
+
+---
+
+#### **5. Additional Requirements**
+
+##### **Geolocation (Real)**:
+- Replace the mock `/api/geolocation` endpoint with a real service.
+- **Provider**: **GeoComply** or **Expo Location** (for development).
+- **Integration**:
+  - Install Expo Location: `npx expo install expo-location`.
+  - Update backend to verify user location against legal states (e.g., NJ, PA).
+- **Cost**: GeoComply is ~$1,000+/month; Expo Location is free for development.
+
+```javascript
+const express = require('express');
+const router = express.Router();
+
+// Replace with real geolocation service (e.g., GeoComply or Expo Location)
+router.get('/', async (req, res) => {
+  const legalStates = ['NJ', 'PA', 'MI', 'CO']; // Example
+  const userState = 'NJ'; // Replace with real geolocation logic
+  res.json({ state: userState, allowed: legalStates.includes(userState) });
+});
+
+module.exports = router;
+```
+
+##### **Scalability**:
+- Use **Redis** for caching odds to reduce API costs and improve performance.
+- Deploy to **AWS Elastic Beanstalk** or **Heroku** for scalability.
+- Implement **WebSockets** (e.g., Socket.IO) for faster odds updates.
+
+##### **Compliance**:
+- **KYC**: Use Stripe Identity or Onfido for identity verification.
+- **Licensing**: Apply for gambling licenses in target states (e.g., NJDGE for New Jersey).
+- **Responsible Gambling**: Add deposit limits, self-exclusion, and links to 1-800-522-4700.
+
+---
+
+### **Setup and Run Instructions**
+
+1. **Prerequisites**:
+   - Node.js, npm, Expo CLI, MongoDB Atlas.
+   - Accounts with The Odds API and Stripe.
+   - Postman and Expo Go for testing.
+
+2. **Backend Setup**:
+   - Clone the backend project and install dependencies: `npm install express mongoose bcryptjs jsonwebtoken dotenv cors axios stripe`.
+   - Copy updated files (`server.js`, `routes/events.js`, `routes/payments.js`, `routes/bets.js`, `models/*`, `.env`).
+   - Run: `node server.js`.
+   - Test endpoints: `/api/events`, `/api/payments/deposit`, `/api/events/inplay`.
+
+3. **Frontend Setup**:
+   - Create the React Native project: `expo init betting-frontend`.
+   - Install dependencies: `npm install axios @react-navigation/native @react-navigation/native-stack @react-navigation/bottom-tabs @react-native-async-storage/async-storage @stripe/stripe-react-native`.
+   - Copy updated files (`screens/*`, `components/*`, `navigation/*`).
+   - Run: `expo start`.
+   - Test on Expo Go or emulator.
+
+4. **Testing Flow**:
+   - Register/login.
+   - Deposit funds via Stripe (test card: 4242 4242 4242 4242).
+   - View real-time odds on Home/In-Play screens.
+   - Place pre-match and in-play bets.
+   - Verify balance and bets in Profile.
+
+---
+
+### **Estimated Costs and Timeline**
+
+- **Costs**:
+  - **The Odds API**: $30–$100/month.
+  - **Stripe**: 2.9% + $0.30 per transaction.
+  - **Geolocation (GeoComply)**: ~$1,000/month (optional; use Expo Location for free initially).
+  - **Hosting (Heroku/AWS)**: $50–$200/month.
+  - **Total**: ~$100–$1,500/month, excluding licensing fees.
+- **Timeline**: 4–8 weeks.
+  - Backend (odds, payments): 1–2 weeks.
+  - Frontend (UI, in-play): 2–3 weeks.
+  - Testing/compliance: 1–2 weeks.
+- **Effort**: ~80–120 hours.
+
+---
+
+### **Challenges and Mitigations**
+
+- **API Costs**: Monitor The Odds API usage to stay within quotas. Cache odds in Redis.
+- **Payment Approval**: Ensure your business is licensed to use Stripe for gambling.
+- **Latency**: Use WebSockets for in-play odds to reduce polling delays.
+- **Compliance**: Consult a legal expert early to navigate state regulations.
+- **Scalability**: Test for high traffic (e.g., during NFL games) using AWS load testing.
+
+---
+
+### **Conclusion**
+
+To implement real-time odds, payment processing, and in-game betting:
+- Use **The Odds API** for real-time pre-match and in-play odds (~$30/month).
+- Integrate **Stripe** for secure deposits/withdrawals (2.9% + $0.30/transaction).
+- Focus on **in-game betting** over live streaming for cost and simplicity.
+- Update your Express.js backend with new routes and MongoDB models, and enhance the React Native frontend with real-time UI and payment forms.
+- Ensure **legal compliance** with licenses, KYC, and geolocation.
+
+Start by setting up The Odds API and Stripe, then add in-game betting. If you want live streaming later, explore Dolby.io but expect high costs. For specific help (e.g., WebSocket setup, compliance tools, or UI enhancements), let me know, and I can provide additional code or guidance. Specify your target state or sports for tailored recommendations!
+
+**Responsible Gambling**: Ensure compliance and include responsible gambling tools. Contact 1-800-522-4700 for support.[](https://deadspin.com/betting-payment-methods/)

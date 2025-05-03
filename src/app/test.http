@@ -1,0 +1,29 @@
+@PORT = http://localhost:3000/
+@Json = application/json
+###
+Get {{PORT}}/comments
+###
+POST {{PORT}}/comments
+Content-Type: {{Json}}
+
+{
+    "text":"this is the new commnet created"
+}
+###
+PUT {{PORT}}/comments/1
+Content-Type: {{Json}}
+
+{
+    "text":"this is the updated commnet created"
+}
+###
+PATCH  {{PORT}}/comments/1
+Content-Type: {{Json}}
+
+{
+    "text":"this is the updated commnet created"
+}
+###
+Get {{PORT}}/comments/1
+###
+DELETE  {{PORT}}/comments/2

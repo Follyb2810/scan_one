@@ -1,0 +1,51 @@
+Absolutely — yes, you can 100% **use Ethers.js to call smart contract functions**, both for:
+
+- **Read-only (view/pure)** functions
+- **Write** (state-changing, requires gas) functions
+
+---
+
+### ✅ Example 1: **Calling a read-only function**
+
+```ts
+import { ethers } from 'ethers'
+
+// Setup provider (e.g., MetaMask)
+const provider = new ethers.providers.Web3Provider(window.ethereum)
+const contract = new ethers.Contract('0xYourContractAddress', yourABI, provider)
+
+// Call a view function
+const value = await contract.getValue()
+console.log('Read value:', value)
+```
+
+---
+
+### ✅ Example 2: **Calling a write function (send transaction)**
+
+```ts
+const signer = provider.getSigner()
+const contractWithSigner = new ethers.Contract('0xYourContractAddress', yourABI, signer)
+
+const tx = await contractWithSigner.setValue(123)
+await tx.wait()
+
+console.log('Transaction complete!')
+```
+
+---
+
+### 🧠 Summary
+
+| Use Case | Ethers.js | Viem |
+|----------|-----------|------|
+| Connect Wallet | ✅ Yes | ✅ Yes (with wagmi or custom setup) |
+| Read from contract | ✅ Yes | ✅ Yes |
+| Write to contract | ✅ Yes | ✅ Yes |
+| Type safety | ⚠️ Basic | ✅ Strong |
+| Performance | ⚠️ Moderate | ✅ Fast |
+| Ecosystem | ✅ Mature | 📈 Growing |
+
+So yes — **Ethers.js can handle everything**, and if you're comfortable with it, no need to switch unless you want Viem’s type-safety or performance edge.
+
+Want help deciding whether to switch to Viem for your current project?

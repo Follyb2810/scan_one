@@ -1,0 +1,138 @@
+import React, { useState, useEffect } from 'react';
+import { useAccount, useSignMessage } from 'wagmi';
+import { Connection, PublicKey } from '@solana/web3.js';
+import axios from 'axios';
+import FullCalendar from '@fullcalendar/react';
+import dayGridPlugin from '@fullcalendar/daygrid';
+import { Container, TextField, Button, List, ListItem, Typography } from '@mui/material';
+
+const App = () => {
+  const { address, isConnected, chain } = useAccount();
+  const { signMessageAsync } = useSignMessage();
+  const [username, setUsername] = useState('');
+  const [emails, setEmails] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [recipient, setRecipient] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+
+  useEffect(() => {
+    if (isConnected && address) {
+      registerUser();
+      fetchEmails();
+      fetchEvents();
+    }
+  }, [isConnected, address]);
+
+  const registerUser = async () => {
+    const message = 'Sign to register with Web3 Email';
+    let signature;
+    if (chain?.name.toLowerCase() === 'solana') {
+      const connection = new Connection('https://api.devnet.solana.com');
+      const publicKey = new PublicKey(address);
+      const encodedMessage = new TextEncoder().encode(message);
+      // Assume Solana wallet provides signature (e.g., via Phantom)
+      signature = 'mock_signature'; // Replace with actual Solana signing
+    } else {
+      signature = await signMessageAsync({ message });
+    }
+
+    const res = await axios.post('http://localhost:5000/api/users/register', {
+      walletAddress: address,
+      signature,
+      chain: chain?.name.toLowerCase(),
+    });
+    setUsername(res.data.username);
+  };
+
+  const updateUsername = async () => {
+    await axios.post('http://localhost:5000/api/users/username', {
+      walletAddress: address,
+      newUsername: prompt('Enter new username'),
+    });
+    registerUser(); // Refresh username
+  };
+
+  const fetchEmails = async () => {
+    const res = await axios.get('http://localhost:5000/api/emails', {
+      params: { walletAddress: address },
+    });
+    setEmails(res.data);
+  };
+
+  const fetchEvents = async () => {
+    const res = await axios.get('http://localhost:5000/api/events', {
+      params: { walletAddress: address },
+    });
+    setEvents(res.data.map(event => ({
+      id: event._id,
+      title: event.title,
+      start: event.start,
+      end: event.end,
+    })));
+  };
+
+  const sendEmail = async () => {
+    await axios.post('http://localhost:5000/api/emails', {
+      senderWallet: address,
+      recipientUsername: recipient,
+      subject,
+      body,
+    });
+    fetchEmails();
+    setRecipient('');
+    setSubject('');
+    setBody('');
+  };
+
+  return (
+    <Container>
+      {!isConnected ? (
+        <Typography>Connect your wallet to continue</Typography>
+      ) : (
+        <>
+          <Typography variant="h6">Wallet: {address}</Typography>
+          <Typography variant="h6">Username: {username}</Typography>
+          <Button onClick={updateUsername}>Update Username</Button>
+          <Typography variant="h4">Email Client</Typography>
+          <TextField
+            label="Recipient Username"
+            value={recipient}
+            onChange={e => setRecipient(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            label="Subject"
+            value={subject}
+            onChange={e => setSubject(e.target.value)}
+            fullWidth
+          />
+          <TextField
+            label="Body"
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            multiline
+            rows={4}
+            fullWidth
+          />
+          <Button onClick={sendEmail}>Send Email</Button>
+          <List>
+            {emails.map(email => (
+              <ListItem key={email._id}>
+                {email.subject} - From: {email.senderWallet}
+              </ListItem>
+            ))}
+          </List>
+          <Typography variant="h4">Calendar</Typography>
+          <FullCalendar
+            plugins={[dayGridPlugin]}
+            initialView="dayGridMonth"
+            events={events}
+          />
+        </>
+      )}
+    </Container>
+  );
+};
+
+export default App;

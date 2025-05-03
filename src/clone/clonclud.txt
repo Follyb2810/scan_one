@@ -1,0 +1,847 @@
+________________________________________
+Technical Requirements
+1.	Backend: The backend API will be developed using Express.js, with MongoDB as the database.
+2.	Frontend: The mobile application will be built with React Native, supporting both Android and iOS platforms.
+3.	Architecture: The app will follow a monolithic architecture for streamlined development and deployment.
+Node.js with Express.js
+MongoDB for database
+Mongoose for ODM
+Socket.io for real-time features
+JWT for authentication
+Passport.js for social authentication
+AWS S3 for video/media storage
+FFmpeg for video processing
+backend/
+├── config/
+│   ├── db.js
+│   ├── passport.js
+│   └── aws.js
+├── controllers/
+│   ├── authController.js
+│   ├── userController.js
+│   ├── videoController.js
+│   ├── commentController.js
+│   ├── chatController.js
+│   ├── notificationController.js
+│   └── giftController.js
+├── middlewares/
+│   ├── auth.js
+│   ├── upload.js
+│   └── errorHandler.js
+├── models/
+│   ├── User.js
+│   ├── Video.js
+│   ├── Comment.js
+│   ├── Like.js
+│   ├── Follower.js
+│   ├── Chat.js
+│   ├── Message.js
+│   ├── Notification.js
+│   ├── Gift.js
+│   └── Transaction.js
+├── routes/
+│   ├── authRoutes.js
+│   ├── userRoutes.js
+│   ├── videoRoutes.js
+│   ├── commentRoutes.js
+│   ├── chatRoutes.js
+│   ├── notificationRoutes.js
+│   └── giftRoutes.js
+├── services/
+│   ├── videoService.js
+│   ├── notificationService.js
+│   ├── chatService.js
+│   └── paymentService.js
+├── utils/
+│   ├── ffmpeg.js
+│   ├── validators.js
+│   └── helpers.js
+├── socket/
+│   ├── index.js
+│   ├── chatHandler.js
+│   └── notificationHandler.js
+├── app.js
+├── server.js
+└── package.json
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  profilePic: { type: String, default: 'default.png' },
+  bio: { type: String, default: '' },
+  followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  videos: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Video' }],
+  coins: { type: Number, default: 0 },
+  socialProvider: { type: String, enum: ['local', 'google', 'facebook', 'apple'] },
+  socialId: { type: String },
+  isVerified: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+const videoSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  videoUrl: { type: String, required: true },
+  thumbnailUrl: { type: String, required: true },
+  description: { type: String, default: '' },
+  music: { type: String, default: 'original sound' },
+  likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  comments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Comment' }],
+  views: { type: Number, default: 0 },
+  shares: { type: Number, default: 0 },
+  filters: [{ type: String }],
+  effects: [{ type: String }],
+  duration: { type: Number, required: true },
+  hashtags: [{ type: String }],
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+const messageSchema = new mongoose.Schema({
+  chat: { type: mongoose.Schema.Types.ObjectId, ref: 'Chat' },
+  sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  content: { type: String },
+  mediaUrl: { type: String },
+  mediaType: { type: String, enum: ['image', 'video', 'gift'] },
+  read: { type: Boolean, default: false },
+  gift: { type: mongoose.Schema.Types.ObjectId, ref: 'Gift' },
+  createdAt: { type: Date, default: Date.now }
+});
+const chatSchema = new mongoose.Schema({
+  participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  messages: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Message' }],
+  lastMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+  status: { type: String, enum: ['pending', 'accepted', 'blocked'], default: 'pending' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+const giftSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  imageUrl: { type: String, required: true },
+  price: { type: Number, required: true },
+  category: { type: String, required: true },
+  animation: { type: String },
+  createdAt: { type: Date, default: Date.now }
+});
+const notificationSchema = new mongoose.Schema({
+  recipient: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  type: { 
+    type: String, 
+    enum: ['like', 'comment', 'follow', 'message', 'gift'], 
+    required: true 
+  },
+  relatedItem: {
+    itemType: { type: String, enum: ['video', 'comment', 'user', 'message', 'gift'] },
+    itemId: { type: mongoose.Schema.Types.ObjectId }
+  },
+  read: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+// config/passport.js
+const passport = require('passport');
+const LocalStrategy = require('passport-local').Strategy;
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const FacebookStrategy = require('passport-facebook').Strategy;
+const AppleStrategy = require('passport-apple').Strategy;
+const User = require('../models/User');
+const bcrypt = require('bcrypt');
+
+// Local Strategy
+passport.use(new LocalStrategy({
+  usernameField: 'email'
+}, async (email, password, done) => {
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return done(null, false, { message: 'User not found' });
+    
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return done(null, false, { message: 'Invalid password' });
+    
+    return done(null, user);
+  } catch (err) {
+    return done(err);
+  }
+}));
+
+// Google Strategy 
+passport.use(new GoogleStrategy({
+  clientID: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  callbackURL: '/api/auth/google/callback'
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    let user = await User.findOne({ socialId: profile.id, socialProvider: 'google' });
+    
+    if (!user) {
+      user = new User({
+        username: `user_${profile.id.substring(0, 8)}`,
+        email: profile.emails[0].value,
+        password: await bcrypt.hash(Math.random().toString(36).slice(-8), 10),
+        profilePic: profile.photos[0].value,
+        socialProvider: 'google',
+        socialId: profile.id,
+        isVerified: true
+      });
+      await user.save();
+    }
+    
+    return done(null, user);
+  } catch (err) {
+    return done(err);
+  }
+}));
+
+// Similar implementations for Facebook and Apple strategies
+// controllers/authController.js
+const User = require('../models/User');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+
+// Register
+exports.register = async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    
+    // Check if user exists
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    if (existingUser) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 12);
+    
+    // Create new user
+    const user = new User({
+      username,
+      email,
+      password: hashedPassword,
+      socialProvider: 'local'
+    });
+    
+    await user.save();
+    
+    // Generate token
+    const token = jwt.sign(
+      { userId: user._id }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '7d' }
+    );
+    
+    res.status(201).json({ token, user: { id: user._id, username, email } });
+  } catch (error) {
+    res.status(500).json({ message: 'Something went wrong', error: error.message });
+  }
+};
+
+// Login
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Check password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+    
+    // Generate token
+    const token = jwt.sign(
+      { userId: user._id }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: '7d' }
+    );
+    
+    res.status(200).json({ 
+      token, 
+      user: { 
+        id: user._id, 
+        username: user.username, 
+        email: user.email,
+        profilePic: user.profilePic
+      } 
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Something went wrong', error: error.message });
+  }
+};
+
+// Social login callback
+exports.socialLoginCallback = (req, res) => {
+  const token = jwt.sign(
+    { userId: req.user._id }, 
+    process.env.JWT_SECRET, 
+    { expiresIn: '7d' }
+  );
+  
+  // Redirect to app with token (or respond with token for API requests)
+  res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}`);
+};
+// routes/authRoutes.js
+const express = require('express');
+const router = express.Router();
+const authController = require('../controllers/authController');
+const passport = require('passport');
+
+// Local auth
+router.post('/register', authController.register);
+router.post('/login', authController.login);
+
+// Social auth
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+router.get('/google/callback', passport.authenticate('google', { session: false }), authController.socialLoginCallback);
+
+router.get('/facebook', passport.authenticate('facebook', { scope: ['email'] }));
+router.get('/facebook/callback', passport.authenticate('facebook', { session: false }), authController.socialLoginCallback);
+
+router.post('/apple', passport.authenticate('apple'));
+router.post('/apple/callback', passport.authenticate('apple', { session: false }), authController.socialLoginCallback);
+
+module.exports = router;
+// routes/videoRoutes.js
+const express = require('express');
+const router = express.Router();
+const videoController = require('../controllers/videoController');
+const auth = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
+
+router.post('/', auth, upload.single('video'), videoController.uploadVideo);
+router.get('/feed', videoController.getFeed);
+router.get('/user/:userId', videoController.getUserVideos);
+router.get('/:id', videoController.getVideo);
+router.post('/:id/like', auth, videoController.likeVideo);
+router.post('/:id/comment', auth, videoController.commentOnVideo);
+router.get('/:id/comments', videoController.getVideoComments);
+
+module.exports = router;
+// routes/videoRoutes.js
+const express = require('express');
+const router = express.Router();
+const videoController = require('../controllers/videoController');
+const auth = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
+
+router.post('/', auth, upload.single('video'), videoController.uploadVideo);
+router.get('/feed', videoController.getFeed);
+router.get('/user/:userId', videoController.getUserVideos);
+router.get('/:id', videoController.getVideo);
+router.post('/:id/like', auth, videoController.likeVideo);
+router.post('/:id/comment', auth, videoController.commentOnVideo);
+router.get('/:id/comments', videoController.getVideoComments);
+
+module.exports = router;
+// routes/videoRoutes.js
+const express = require('express');
+const router = express.Router();
+const videoController = require('../controllers/videoController');
+const auth = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
+
+router.post('/', auth, upload.single('video'), videoController.uploadVideo);
+router.get('/feed', videoController.getFeed);
+router.get('/user/:userId', videoController.getUserVideos);
+router.get('/:id', videoController.getVideo);
+router.post('/:id/like', auth, videoController.likeVideo);
+router.post('/:id/comment', auth, videoController.commentOnVideo);
+router.get('/:id/comments', videoController.getVideoComments);
+
+module.exports = router;
+// routes/userRoutes.js
+const express = require('express');
+const router = express.Router();
+const userController = require('../controllers/userController');
+const auth = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
+
+router.get('/me', auth, userController.getProfile);
+router.put('/me', auth, upload.single('profilePic'), userController.updateProfile);
+router.post('/follow/:id', auth, userController.followUser);
+router.post('/unfollow/:id', auth, userController.unfollowUser);
+router.get('/:id', userController.getUserProfile);
+router.get('/:id/followers', userController.getUserFollowers);
+router.get('/:id/following', userController.getUserFollowing);
+router.get('/search', userController.searchUsers);
+
+module.exports = router;
+// routes/userRoutes.js
+const express = require('express');
+const router = express.Router();
+const userController = require('../controllers/userController');
+const auth = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
+
+router.get('/me', auth, userController.getProfile);
+router.put('/me', auth, upload.single('profilePic'), userController.updateProfile);
+router.post('/follow/:id', auth, userController.followUser);
+router.post('/unfollow/:id', auth, userController.unfollowUser);
+router.get('/:id', userController.getUserProfile);
+router.get('/:id/followers', userController.getUserFollowers);
+router.get('/:id/following', userController.getUserFollowing);
+router.get('/search', userController.searchUsers);
+
+module.exports = router;
+// routes/chatRoutes.js
+const express = require('express');
+const router = express.Router();
+const chatController = require('../controllers/chatController');
+const auth = require('../middlewares/auth');
+
+router.get('/', auth, chatController.getChats);
+router.post('/:userId', auth, chatController.createChat);
+router.get('/:chatId', auth, chatController.getChatMessages);
+router.post('/:chatId/messages', auth, chatController.sendMessage);
+router.put('/requests/:chatId/accept', auth, chatController.acceptChatRequest);
+router.put('/requests/:chatId/reject', auth, chatController.rejectChatRequest);
+router.get('/requests', auth, chatController.getMessageRequests);
+
+module.exports = router;
+
+// routes/giftRoutes.js
+const express = require('express');
+const router = express.Router();
+const giftController = require('../controllers/giftController');
+const auth = require('../middlewares/auth');
+
+router.get('/', giftController.getGifts);
+router.post('/purchase', auth, giftController.purchaseCoins);
+router.post('/send/:userId', auth, giftController.sendGift);
+router.get('/transactions', auth, giftController.getTransactions);
+
+module.exports = router;
+
+Frontend Implementation
+Tech Stack
+
+React Native for cross-platform mobile development
+Redux for state management
+React Navigation for routing
+Axios for API calls
+Socket.io-client for real-time features
+React Native Video for video playback
+React Native Camera for video recording
+frontend/
+├── src/
+│   ├── api/
+│   │   ├── index.js
+│   │   ├── auth.js
+│   │   ├── videos.js
+│   │   ├── users.js
+│   │   ├── chats.js
+│   │   └── gifts.js
+│   ├── assets/
+│   │   ├── images/
+│   │   ├── icons/
+│   │   └── animations/
+│   ├── components/
+│   │   ├── common/
+│   │   │   ├── Button.js
+│   │   │   ├── TextInput.js
+│   │   │   ├── Avatar.js
+│   │   │   └── Loader.js
+│   │   ├── video/
+│   │   │   ├── VideoPlayer.js
+│   │   │   ├── VideoControls.js
+│   │   │   ├── VideoComments.js
+│   │   │   └── VideoRecorder.js
+│   │   ├── chat/
+│   │   │   ├── ChatList.js
+│   │   │   ├── ChatMessage.js
+│   │   │   ├── MessageInput.js
+│   │   │   └── GiftSelector.js
+│   │   └── profile/
+│   │       ├── ProfileHeader.js
+│   │       ├── ProfileTabs.js
+│   │       └── VideoGrid.js
+│   ├── context/
+│   │   ├── AuthContext.js
+│   │   └── SocketContext.js
+│   ├── hooks/
+│   │   ├── useAuth.js
+│   │   ├── useSocket.js
+│   │   └── useVideo.js
+│   ├── navigation/
+│   │   ├── index.js
+│   │   ├── AuthNavigator.js
+│   │   ├── MainNavigator.js
+│   │   └── BottomTabNavigator.js
+│   ├── redux/
+│   │   ├── store.js
+│   │   ├── slices/
+│   │   │   ├── authSlice.js
+│   │   │   ├── videosSlice.js
+│   │   │   ├── userSlice.js
+│   │   │   ├── chatSlice.js
+│   │   │   └── notificationSlice.js
+│   │   └── actions/
+│   │       ├── authActions.js
+│   │       ├── videoActions.js
+│   │       ├── userActions.js
+│   │       ├── chatActions.js
+│   │       └── notificationActions.js
+│   ├── screens/
+│   │   ├── auth/
+│   │   │   ├── LoginScreen.js
+│   │   │   ├── RegisterScreen.js
+│   │   │   └── SocialAuthScreen.js
+│   │   ├── main/
+│   │   │   ├── HomeScreen.js
+│   │   │   ├── DiscoverScreen.js
+│   │   │   ├── CreateVideoScreen.js
+│   │   │   ├── NotificationsScreen.js
+│   │   │   └── ProfileScreen.js
+│   │   ├── video/
+│   │   │   ├── VideoDetailScreen.js
+│   │   │   ├── VideoEditScreen.js
+│   │   │   └── VideoFeedScreen.js
+│   │   └── chat/
+│   │       ├── ChatListScreen.js
+│   │       ├── ChatScreen.js
+│   │       ├── MessageRequestsScreen.js
+│   │       └── GiftingScreen.js
+│   ├── utils/
+│   │   ├── storage.js
+│   │   ├── validation.js
+│   │   └── formatting.js
+│   ├── App.js
+│   └── index.js
+└── package.json
+
+// src/screens/auth/LoginScreen.js
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useDispatch } from 'react-redux';
+import { login, socialLogin } from '../../redux/actions/authActions';
+import { TextInput, Button } from '../../components/common';
+
+const LoginScreen = ({ navigation }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  
+  const dispatch = useDispatch();
+  
+  const handleLogin = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      await dispatch(login(email, password));
+    } catch (err) {
+      setError(err.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const handleGoogleLogin = async () => {
+    try {
+      await dispatch(socialLogin('google'));
+    } catch (err) {
+      setError(err.message || 'Google login failed');
+    }
+  };
+  
+  const handleFacebookLogin = async () => {
+    try {
+      await dispatch(socialLogin('facebook'));
+    } catch (err) {
+      setError(err.message || 'Facebook login failed');
+    }
+  };
+  
+  const handleAppleLogin = async () => {
+    try {
+      await dispatch(socialLogin('apple'));
+    } catch (err) {
+      setError(err.message || 'Apple login failed');
+    }
+  };
+  
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Login to TikTok Clone</Text>
+      
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      
+      <TextInput
+        placeholder="Email"
+        value={email}
+        onChangeText={setEmail}
+        keyboardType="email-address"
+        autoCapitalize="none"
+      />
+      
+      <TextInput
+        placeholder="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+      />
+      
+      <Button 
+        title="Login" 
+        onPress={handleLogin} 
+        loading={loading} 
+      />
+      
+      <View style={styles.divider}>
+        <View style={styles.line} />
+        <Text style={styles.dividerText}>OR</Text>
+        <View style={styles.line} />
+      </View>
+      
+      <Button 
+        title="Continue with Google" 
+        onPress={handleGoogleLogin}
+        type="outline"
+        icon="google"
+      />
+      
+      <Button 
+        title="Continue with Facebook" 
+        onPress={handleFacebookLogin}
+        type="outline"
+        icon="facebook"
+      />
+      
+      <Button 
+        title="Continue with Apple" 
+        onPress={handleAppleLogin}
+        type="outline"
+        icon="apple"
+      />
+      
+      <View style={styles.footer}>
+        <Text>Don't have an account? </Text>
+        <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+          <Text style={styles.link}>Sign up</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 20,
+    justifyContent: 'center',
+    backgroundColor: '#fff'
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center'
+  },
+  error: {
+    color: 'red',
+    marginBottom: 10
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20
+  },
+  line: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E0E0E0'
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    color: '#777'
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 20
+  },
+  link: {
+    color: '#FF2B54',
+    fontWeight: '500'
+  }
+});
+
+export default LoginScreen;
+// src/screens/main/HomeScreen.js
+import React, { useEffect, useState, useRef } from 'react';
+import { View, FlatList, StyleSheet, Dimensions } from 'react-native';
+import { useDispatch, useSelector } from 'react-redux';
+import { fetchVideos } from '../../redux/actions/videoActions';
+import VideoPlayer from '../../components/video/VideoPlayer';
+import Loader from '../../components/common/Loader';
+
+const { height } = Dimensions.get('window');
+
+const HomeScreen = () => {
+  const [activeVideoIndex, setActiveVideoIndex] = useState(0);
+  const flatListRef = useRef(null);
+  
+  const dispatch = useDispatch();
+  const { videos, loading, error } = useSelector(state => state.videos);
+  
+  useEffect(() => {
+    dispatch(fetchVideos());
+  }, [dispatch]);
+  
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+    if (viewableItems.length > 0) {
+      setActiveVideoIndex(viewableItems[0].index);
+    }
+  }).current;
+  
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 50
+  }).current;
+  
+  if (loading && videos.length === 0) {
+    return <Loader />;
+  }
+  
+  return (
+    <View style={styles.container}>
+      <FlatList
+        ref={flatListRef}
+        data={videos}
+        renderItem={({ item, index }) => (
+          <VideoPlayer
+            video={item}
+            isActive={index === activeVideoIndex}
+            height={height}
+          />
+        )}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        pagingEnabled
+        keyExtractor={item => item._id}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={height}
+        snapToAlignment="start"
+        decelerationRate="fast"
+      />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000'
+  }
+});
+
+export default HomeScreen;
+// src/components/video/VideoPlayer.js
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import Video from 'react-native-video';
+import { useDispatch } from 'react-redux';
+import { likeVideo, viewVideo } from '../../redux/actions/videoActions';
+import VideoControls from './VideoControls';
+import { formatNumber } from '../../utils/formatting';
+
+const VideoPlayer = ({ video, isActive, height }) => {
+  const [paused, setPaused] = useState(!isActive);
+  const [muted, setMuted] = useState(false);
+  const [liked, setLiked] = useState(false);
+  const videoRef = useRef(null);
+  
+  const dispatch = useDispatch();
+  
+  useEffect(() => {
+    setPaused(!isActive);
+    
+    if (isActive) {
+      dispatch(viewVideo(video._id));
+    }
+  }, [isActive, video._id, dispatch]);
+  
+  const handleVideoPress = () => {
+    setPaused(!paused);
+  };
+  
+  const handleLike = () => {
+    setLiked(!liked);
+    dispatch(likeVideo(video._id));
+  };
+  
+  const handleMute = () => {
+    setMuted(!muted);
+  };
+  
+  return (
+    <View style={[styles.container, { height }]}>
+      <TouchableOpacity 
+        activeOpacity={1}
+        style={styles.videoContainer}
+        onPress={handleVideoPress}
+      >
+        <Video
+          ref={videoRef}
+          source={{ uri: video.videoUrl }}
+          style={styles.video}
+          resizeMode="cover"
+          repeat
+          paused={paused}
+          muted={muted}
+          poster={video.thumbnailUrl}
+          posterResizeMode="cover"
+        />
+      </TouchableOpacity>
+      
+      <View style={styles.overlay}>
+        <View style={styles.userInfo}>
+          <Image
+            source={{ uri: video.user.profilePic }}
+            style={styles.avatar}
+          />
+          <Text style={styles.username}>@{video.user.username}</Text>
+          <Text style={styles.description}>{video.description}</Text>
+        </View>
+        
+        <VideoControls
+          likes={formatNumber(video.likes.length)}
+          comments={formatNumber(video.comments.length)}
+          shares={formatNumber(video.shares)}
+          onLike={handleLike}
+          onComment={() => {}}
+          onShare={() => {}}
+          onMute={handleMute}
+          liked={liked}
+          muted={muted}
+          user={video.user}
+        />
+      </View>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  videoContainer: {
+    flex: 1
+  },
+  video: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    right: 0
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 20
+  },
+  userInfo

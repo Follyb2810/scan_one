@@ -1,0 +1,30 @@
+import React from 'react';
+import ReactDOM from 'react-dom';
+import { WagmiConfig, createConfig, configureChains } from 'wagmi';
+import { publicProvider } from 'wagmi/providers/public';
+import { mainnet, polygon } from 'wagmi/chains';
+import { Web3Modal } from '@web3modal/react';
+import App from './App';
+
+const { chains, provider } = configureChains(
+  [mainnet, polygon],
+  [publicProvider()]
+);
+
+const config = createConfig({
+  autoConnect: true,
+  provider,
+});
+
+const walletConnectProjectId = 'your_walletconnect_project_id'; // Get from WalletConnect
+
+ReactDOM.render(
+  <WagmiConfig config={config}>
+    <App />
+    <Web3Modal
+      projectId={walletConnectProjectId}
+      ethereumClient={{ chains }}
+    />
+  </WagmiConfig>,
+  document.getElementById('root')
+);

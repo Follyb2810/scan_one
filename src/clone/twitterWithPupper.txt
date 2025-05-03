@@ -1,0 +1,94 @@
+const puppeteer = require('puppeteer');
+const notifier = require('node-notifier');
+
+const tweets = {};
+const N = [];
+
+const THandlers = [
+  {
+    name: 'WhaleWatch',
+    url: 'https://twitter.com/whalewatchio',
+    keywords: 'long',
+  },
+];
+
+// Helper: Extract tweets from a page
+const extractTweetsFromPage = async (page) => {
+  // This selector might change depending on Twitter updates
+  const tweetSelector = 'article div[data-testid="tweetText"]';
+
+  return await page.$$eval(tweetSelector, elements =>
+    elements.map(el => el.innerText)
+  );
+};
+
+// Helper: Fetch tweets for one handler
+const fetchTweets = async (page, handler) => {
+  try {
+    await page.goto(handler.url, { waitUntil: 'networkidle2' });
+
+    const currentTweets = await extractTweetsFromPage(page);
+    const urlKey = handler.url;
+
+    if (!tweets[urlKey]) {
+      tweets[urlKey] = currentTweets;
+    } else {
+      currentTweets.forEach((tweet) => {
+        if (!tweets[urlKey].includes(tweet)) {
+          tweets[urlKey].push(tweet);
+
+          const keywords = handler.keywords.split(',').map(k => k.trim());
+          const matched =
+            keywords.includes('*') || keywords.some(kw => tweet.includes(kw));
+
+          if (matched) {
+            N.push({ tweet, name: handler.name });
+          }
+        }
+      });
+    }
+  } catch (error) {
+    console.error(`Error fetching tweets for ${handler.name}:`, error.message);
+  }
+};
+
+// Main loop
+(async () => {
+  const browser = await puppeteer.launch({
+    headless: true, // set to false if you want to see the browser
+    defaultViewport: null,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
+
+  const page = await browser.newPage();
+
+  // Preload storage
+  THandlers.forEach((h) => {
+    tweets[h.url] = [];
+  });
+
+  // Tweet monitor every 5s
+  setInterval(async () => {
+    for (const handler of THandlers) {
+      await fetchTweets(page, handler);
+    }
+  }, 5000);
+
+  // Notification monitor every 500ms
+  setInterval(() => {
+    if (N.length) {
+      const next = N.shift();
+      notifier.notify({
+        title: next.name,
+        message: next.tweet,
+        sound: true,
+      });
+    }
+  }, 500);
+})();
+
+npm install puppeteer node-notifier
+
+//
+<div data-testid="tweetText">This is the tweet text</div>
+ div[data-testid="tweetText"]

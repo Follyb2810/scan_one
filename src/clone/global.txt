@@ -1,0 +1,84 @@
+Great question! Let's break it down — you're asking about:
+
+- `global`
+- `globalThis`
+- `req.locals` (likely you meant `req.app.locals` or `res.locals`)
+
+These all refer to different scopes or lifetimes of data in Node.js / Express. Here's a breakdown of each:
+
+---
+
+### 🔹 `global` and `globalThis` in Node.js
+
+Both `global` and `globalThis` refer to **global objects**, but `globalThis` is newer and standardized across environments (like browsers and Node.js).
+
+#### ✅ `global`
+- Node.js-specific.
+- Anything you attach to `global` is accessible throughout your app.
+
+```js
+global.myValue = 42;
+
+console.log(global.myValue); // 42
+```
+
+#### ✅ `globalThis`
+- A standard way to access the global object in any JS environment (browser, Node.js, etc).
+- In Node.js, `globalThis === global` is true.
+
+```js
+globalThis.myValue = 'hello';
+console.log(global.myValue); // 'hello'
+```
+
+#### ⚠️ Caveat:
+Avoid overusing `global`/`globalThis` unless you **really** need truly global state, like app-wide constants or config. It's easy to accidentally create name collisions or make debugging harder.
+
+---
+
+### 🔹 `res.locals` in Express
+
+- This is **specific to each response**.
+- Data in `res.locals` is available only during the lifecycle of a **single request/response**.
+- Commonly used to pass data to views (in templating engines) or middleware.
+
+```js
+app.use((req, res, next) => {
+  res.locals.username = 'JohnDoe';
+  next();
+});
+
+app.get('/', (req, res) => {
+  res.send(`Hello ${res.locals.username}`);
+});
+```
+
+---
+
+### 🔹 `req.app.locals` in Express
+
+- This is **app-level shared state**, accessible from `req.app.locals`, and same as `app.locals`.
+- You set it on your Express app, and it’s accessible in all requests.
+
+```js
+app.locals.siteName = 'Codeline Digital';
+
+app.get('/', (req, res) => {
+  res.send(`Welcome to ${req.app.locals.siteName}`);
+});
+```
+
+---
+
+### 🧠 Summary
+
+| Name              | Scope                  | Lifetime        | Use Case |
+|-------------------|------------------------|------------------|----------|
+| `global`          | Global (Node.js only)  | App-wide         | Global configs, rarely used |
+| `globalThis`      | Global (Standard)      | App-wide         | Modern way to access global |
+| `res.locals`      | Per response           | One request/response | Middleware/view data |
+| `req.app.locals`  | App-wide (in Express)  | As long as app runs | Share config/data between routes |
+
+---
+
+Let me know if you want a real-world use case for each or a recommendation for best practices!

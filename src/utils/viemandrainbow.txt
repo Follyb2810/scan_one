@@ -1,0 +1,107 @@
+Great question! To connect a wallet using **Viem**, you'd typically use it **with `wagmi`**, which is the companion library built for handling wallet connections, account management, and more — fully compatible with Viem.
+
+### 🧩 Basic Setup to Connect a Wallet using `wagmi` + `viem`
+
+---
+
+### 1. **Install the required packages**
+
+```bash
+npm install viem wagmi @wagmi/core @wagmi/connectors
+```
+
+If you're using React:
+
+```bash
+npm install wagmi viem @wagmi/core @wagmi/connectors @rainbow-me/rainbowkit
+```
+
+RainbowKit makes wallet UI integration super smooth.
+
+---
+
+### 2. **Example: Connecting wallet using wagmi (with viem)**
+
+Here's a **minimal example using `wagmi` and `viem`** (React-based):
+
+```tsx
+// App.tsx
+import { WagmiConfig, createConfig, configureChains } from 'wagmi'
+import { mainnet, sepolia } from 'wagmi/chains'
+import { publicProvider } from 'wagmi/providers/public'
+import { MetaMaskConnector } from '@wagmi/connectors/metaMask'
+import { useAccount, useConnect, useDisconnect } from 'wagmi'
+
+const { chains, publicClient } = configureChains(
+  [mainnet, sepolia],
+  [publicProvider()]
+)
+
+const config = createConfig({
+  autoConnect: true,
+  connectors: [
+    new MetaMaskConnector({ chains }),
+  ],
+  publicClient,
+})
+
+function ConnectButton() {
+  const { address, isConnected } = useAccount()
+  const { connect, connectors, isLoading, pendingConnector } = useConnect()
+  const { disconnect } = useDisconnect()
+
+  if (isConnected)
+    return (
+      <div>
+        <div>Connected to {address}</div>
+        <button onClick={() => disconnect()}>Disconnect</button>
+      </div>
+    )
+
+  return (
+    <div>
+      {connectors.map((connector) => (
+        <button
+          disabled={!connector.ready}
+          key={connector.id}
+          onClick={() => connect({ connector })}
+        >
+          Connect with {connector.name}
+          {isLoading &&
+            connector.id === pendingConnector?.id &&
+            ' (connecting)'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export default function App() {
+  return (
+    <WagmiConfig config={config}>
+      <ConnectButton />
+    </WagmiConfig>
+  )
+}
+```
+
+---
+
+### 🧠 Behind the scenes:
+
+- `wagmi` handles wallet connection (MetaMask, WalletConnect, etc.).
+- `viem` is used under the hood for contract reads/writes, via the `publicClient`.
+
+---
+
+### Optional: Use RainbowKit for a beautiful wallet UI
+
+```bash
+npm install @rainbow-me/rainbowkit
+```
+
+And replace your connect button with the `ConnectButton` from RainbowKit.
+
+---
+
+If you're not using React and need a **vanilla JS + viem** example, I can show you that too — just say the word. Want that?

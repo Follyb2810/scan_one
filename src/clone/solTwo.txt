@@ -1,0 +1,255 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const { ethers } = require('ethers');
+const { Connection, PublicKey } = require('@solana/web3.js');
+const nacl = require('tweetnacl');
+const cors = require('cors');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// MongoDB Connection
+mongoose.connect('mongodb://localhost:27017/web3_email_calendar', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+// Smart Contract (Polygon)
+const provider = new ethers.providers.JsonRpcProvider('https://polygon-rpc.com');
+const contractAddress = 'YOUR_CONTRACT_ADDRESS';
+const contractAbi = [
+  'function isSubscribed(address user) view returns (bool)',
+  'function hasBalance(address user) view returns (bool)',
+];
+const contract = new ethers.Contract(contractAddress, contractAbi, provider);
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  username: { type: String, unique: true },
+  wallets: [{ address: String, chain: String }],
+  subscription: { status: Boolean, expiry: Date },
+});
+const User = mongoose.model('User', userSchema);
+
+// Email Schema
+const emailSchema = new mongoose.Schema({
+  senderUsername: String,
+  recipientUsername: String,
+  subject: String,
+  body: String,
+  timestamp: { type: Date, default: Date.now },
+});
+const Email = mongoose.model('Email', emailSchema);
+
+// Event Schema
+const eventSchema = new mongoose.Schema({
+  username: String,
+  title: String,
+  start: Date,
+  end: Date,
+});
+const Event = mongoose.model('Event', eventSchema);
+
+// Usage Schema
+const usageSchema = new mongoose.Schema({
+  username: String,
+  date: Date,
+  emailCount: Number,
+  eventCount: Number,
+});
+const Usage = mongoose.model('Usage', usageSchema);
+
+// Username Generation
+const adjectives = ['Quick', 'Brave', 'Silent', 'Bold', 'Wise', 'Swift', 'Calm', 'Fierce', 'Cool', 'Star'];
+const nouns = ['Fox', 'Wolf', 'Hawk', 'Bear', 'Lion', 'Deer', 'Viper', 'Eagle', 'Tiger', 'Shark'];
+
+const generateUsername = async () => {
+  let username;
+  const maxAttempts = 10;
+  let attempts = 0;
+
+  do {
+    const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const number = Math.floor(Math.random() * 1000);
+    username = `${adjective}${noun}${number}`;
+    attempts++;
+  } while (await User.findOne({ username }) && attempts < maxAttempts);
+
+  if (attempts >= maxAttempts) throw new Error('Unable to generate unique username');
+  return username;
+};
+
+// Verify Signatures
+const verifyEthSignature = async (walletAddress, signature, message) => {
+  const signer = ethers.utils.verifyMessage(message, signature);
+  return signer.toLowerCase() === walletAddress.toLowerCase();
+};
+
+const verifySolanaSignature = async (walletAddress, signature, message) => {
+  const connection = new Connection('https://api.devnet.solana.com');
+  const publicKey = new PublicKey(walletAddress);
+  const encodedMessage = new TextEncoder().encode(message);
+  return nacl.sign.detached.verify(encodedMessage, Buffer.from(signature, 'hex'), publicKey.toBuffer());
+};
+
+// Check Quotas
+const checkQuota = async (username, action) => {
+  const user = await User.findOne({ username });
+  if (user.subscription.status && user.subscription.expiry > new Date()) {
+    return true; // Subscribed users have no limits
+  }
+
+  const today = new Date().setHours(0, 0, 0, 0);
+  let usage = await Usage.findOne({ username, date: today });
+  if (!usage) {
+    usage = new Usage({ username, date: today, emailCount: 0, eventCount: 0 });
+  }
+
+  if (action === 'email' && usage.emailCount >= 10) {
+    const hasBalance = await contract.hasBalance(user.wallets[0].address);
+    if (!hasBalance) return false;
+    usage.emailCount++;
+  } else if (action === 'event' && usage.eventCount >= 5) {
+    const hasBalance = await contract.hasBalance(user.wallets[0].address);
+    if (!hasBalance) return false;
+    usage.eventCount++;
+  } else {
+    action === 'email' ? usage.emailCount++ : usage.eventCount++;
+  }
+
+  await usage.save();
+  return true;
+};
+
+// User Routes
+app.post('/api/users/register', async (req, res) => {
+  const { walletAddress, signature, chain } = req.body;
+  const message = 'Sign to register with Web3 Email';
+
+  let isValid;
+  if (chain === 'solana') {
+    isValid = await verifySolanaSignature(walletAddress, signature, message);
+  } else {
+    isValid = await verifyEthSignature(walletAddress, signature, message);
+  }
+
+  if (!isValid) return res.status(401).json({ message: 'Invalid signature' });
+
+  try {
+    let user = await User.findOne({ 'wallets.address': walletAddress });
+    if (!user) {
+      const username = await generateUsername();
+      user = new User({
+        username,
+        wallets: [{ address: walletAddress, chain }],
+        subscription: { status: false, expiry: null },
+      });
+      await user.save();
+    }
+    res.json({ username: user.username });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+app.post('/api/users/add-wallet', async (req, res) => {
+  const { username, walletAddress, signature, chain } = req.body;
+  const message = 'Sign to add wallet';
+
+  let isValid;
+  if (chain === 'solana') {
+    isValid = await verifySolanaSignature(walletAddress, signature, message);
+  } else {
+    isValid = await verifyEthSignature(walletAddress, signature, message);
+  }
+
+  if (!isValid) return res.status(401).json({ message: 'Invalid signature' });
+
+  const user = await User.findOne({ username });
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  if (user.wallets.some(w => w.address === walletAddress)) {
+    return res.status(400).json({ message: 'Wallet already added' });
+  }
+
+  user.wallets.push({ address: walletAddress, chain });
+  await user.save();
+  res.json({ message: 'Wallet added' });
+});
+
+app.post('/api/users/username', async (req, res) => {
+  const { username, newUsername } = req.body;
+  if (newUsername.length < 3 || newUsername.length > 20) {
+    return res.status(400).json({ message: 'Username must be 3-20 characters' });
+  }
+  if (await User.findOne({ username: newUsername })) {
+    return res.status(400).json({ message: 'Username taken' });
+  }
+  await User.updateOne({ username }, { username: newUsername });
+  res.json({ message: 'Username updated' });
+});
+
+app.post('/api/payments/subscribe', async (req, res) => {
+  const { username, walletAddress } = req.body;
+  const isSubscribed = await contract.isSubscribed(walletAddress);
+  if (!isSubscribed) return res.status(400).json({ message: 'Subscription not found' });
+
+  const user = await User.findOne({ username });
+  user.subscription = { status: true, expiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) };
+  await user.save();
+  res.json({ message: 'Subscription activated' });
+});
+
+// Email Routes
+app.post('/api/emails', async (req, res) => {
+  const { senderUsername, recipientUsername, subject, body } = req.body;
+  const recipient = await User.findOne({ username: recipientUsername });
+  if (!recipient) return res.status(404).json({ message: 'Recipient not found' });
+
+  if (!(await checkQuota(senderUsername, 'email'))) {
+    return res.status(403).json({ message: 'Email quota exceeded. Please subscribe or pay per use.' });
+  }
+
+  const email = new Email({
+    senderUsername,
+    recipientUsername,
+    subject,
+    body,
+  });
+  await email.save();
+  res.status(201).json({ message: 'Email sent' });
+});
+
+app.get('/api/emails', async (req, res) => {
+  const { username } = req.query;
+  const emails = await Email.find({
+    $or: [{ senderUsername: username }, { recipientUsername: username }],
+  });
+  res.json(emails);
+});
+
+// Calendar Routes
+app.post('/api/events', async (req, res) => {
+  const { username, title, start, end } = req.body;
+  if (!(await checkQuota(username, 'event'))) {
+    return res.status(403).json({ message: 'Event quota exceeded. Please subscribe or pay per use.' });
+  }
+
+  const event = new Event({
+    username,
+    title,
+    start,
+    end,
+  });
+  await event.save();
+  res.status(201).json({ message: 'Event created' });
+});
+
+app.get('/api/events', async (req, res) => {
+  const { username } = req.query;
+  const events = await Event.find({ username });
+  res.json(events);
+});
+
+app.listen(5000, () => console.log('Server running on port 5000'));

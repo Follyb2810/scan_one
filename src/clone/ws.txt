@@ -1,0 +1,122 @@
+cd server
+npm install # or yarn install
+npm start # or yarn start
+
+#-- Set up and start the client
+cd client
+npm install # or yarn install
+npm start # or yarn start
+
+
+
+const { WebSocketServer } = require('ws');
+const http = require('http');
+
+// Spinning the HTTP server and the WebSocket server.
+const server = http.createServer();
+const wsServer = new WebSocketServer({ server });
+const port = 8000;
+server.listen(port, () => {
+  console.log(`WebSocket server is running on port ${port}`);
+});
+
+const clients = {};
+
+// A new client connection request received
+wsServer.on('connection', function(connection) {
+  // Generate a unique code for every user
+  const userId = uuidv4();
+  console.log(`Received a new connection.`);
+
+  // Store the new connection and handle messages
+  clients[userId] = connection;
+  console.log(`${userId} connected.`);
+});
+
+import React from 'react';
+import useWebSocket from 'react-use-websocket';
+
+import './App.css';
+
+const WS_URL = 'ws://127.0.0.1:8000';
+
+function App() {
+  useWebSocket(WS_URL, {
+    onOpen: () => {
+      console.log('WebSocket connection established.');
+    }
+  });
+
+  return (
+    <div>Hello WebSockets!</div>
+  );
+}
+
+export default App;
+
+/* When a user joins, I notify the
+server that a new user has joined to edit the document. */
+function LoginSection({ onLogin }) {
+  const [username, setUsername] = useState('');
+  useWebSocket(WS_URL, {
+    share: true,
+    filter: () => false
+  });
+  function logInUser() {
+    if(!username.trim()) {
+      return;
+    }
+    onLogin && onLogin(username); // Triggers sendJsonMessage in App
+  }
+  // ----
+  // ----
+
+/* When content changes, we send the
+current content of the editor to the server. */
+function handleHtmlChange(e) {
+  sendJsonMessage({
+    type: 'contentchange',
+    content: e.target.value
+  });
+}
+
+return (
+  <DefaultEditor value={html} onChange={handleHtmlChange} />
+);
+
+function History() {
+  const { lastJsonMessage } = useWebSocket(WS_URL, {
+    share: true,
+    filter: isUserEvent
+  });
+  const activities = lastJsonMessage?.data.userActivity || [];
+  return (
+    <ul>
+      {activities.map((activity, index) => <li key={`activity-${index}`}>{activity}</li>)}
+    </ul>
+  );
+}
+function broadcastMessage(json) {
+  // We are sending the current data to all connected active clients
+  const data = JSON.stringify(json);
+  for(let userId in clients) {
+    let client = clients[userId];
+    if(client.readyState === WebSocket.OPEN) {
+      client.send(data);
+    }
+  };
+}
+
+function handleDisconnect(userId) {
+    console.log(`${userId} disconnected.`);
+    const json = { type: typesDef.USER_EVENT };
+    const username = users[userId]?.username || userId;
+    userActivity.push(`${username} left the document`);
+    json.data = { users, userActivity };
+    delete clients[userId];
+    delete users[userId];
+    broadcastMessage(json);
+}
+
+// User disconnected
+connection.on('close', () => handleDisconnect(userId));

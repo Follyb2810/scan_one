@@ -1,0 +1,61 @@
+Yes, **you absolutely can use Ethers.js for wallet connection and Viem for contract interaction** — they can work side by side.
+
+But there's a key thing to understand:
+
+### 🔄 How this works:
+- **Ethers.js** provides the wallet/signer (e.g., via `window.ethereum` or `MetaMask`).
+- **Viem** needs a **`walletClient`** or **`account`** to perform contract writes (and optionally for reads too).
+
+You can **create a Viem `walletClient` from an Ethers signer**, which lets you connect the two worlds.
+
+---
+
+### ✅ Example: Ethers wallet + Viem contract interaction
+
+```ts
+import { ethers } from 'ethers'
+import { createWalletClient, custom, getContract } from 'viem'
+import { mainnet } from 'viem/chains'
+
+// 1. Connect using ethers
+const provider = new ethers.providers.Web3Provider(window.ethereum)
+await provider.send("eth_requestAccounts", [])
+const signer = provider.getSigner()
+
+const address = await signer.getAddress()
+console.log("Connected address:", address)
+
+// 2. Create viem walletClient using ethers provider
+const walletClient = createWalletClient({
+  account: address,
+  chain: mainnet,
+  transport: custom(window.ethereum)
+})
+
+// 3. Use viem to interact with contract
+const contract = getContract({
+  address: '0xYourContractAddress',
+  abi: yourContractABI,
+  client: { wallet: walletClient },
+})
+
+// Call a function
+await contract.write.yourFunctionName([/* args */])
+```
+
+---
+
+### 🧠 Why would you do this?
+
+- Maybe you already use Ethers for wallet connection (like MetaMask UI logic).
+- You want to take advantage of **Viem's contract utilities**, type safety, gas estimation, etc.
+
+---
+
+### 🚫 Caution:
+- Don't mix and match contract instances (e.g., don’t read from contract using Ethers and write using Viem unless you know what you’re doing).
+- Always make sure the `account` used in Viem is the same one from Ethers.
+
+---
+
+Let me know your setup (React? Vanilla JS? wagmi?) — I can give you a more specific integration if needed.

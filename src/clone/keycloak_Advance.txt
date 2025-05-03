@@ -1,0 +1,260 @@
+No, you don’t need Docker to run Keycloak! While Docker is a convenient way to set it up quickly, Keycloak can absolutely be run without it by downloading and running it directly on your machine using a standalone installation. Below, I’ll guide you through setting up Keycloak without Docker and integrating it with your Express.js and MongoDB-based TikTok clone app.
+
+---
+
+### Step 1: Install Keycloak Without Docker
+#### Prerequisites
+- **Java**: Keycloak requires Java (version 11 or later). Install it if you don’t have it:
+  - On macOS: `brew install openjdk@11`
+  - On Ubuntu: `sudo apt update && sudo apt install openjdk-11-jdk`
+  - On Windows: Download from [Adoptium](https://adoptium.net/) and follow the installation instructions.
+  - Verify: `java -version`
+
+#### Download and Run Keycloak
+1. **Download Keycloak**:
+   - Go to [Keycloak Downloads](https://www.keycloak.org/downloads).
+   - Download the latest stable version (e.g., `keycloak-24.0.2.zip` or `.tar.gz`).
+
+2. **Extract the File**:
+   - Unzip it to a directory (e.g., `/path/to/keycloak-24.0.2`).
+
+3. **Start Keycloak**:
+   - Open a terminal and navigate to the Keycloak directory:
+     ```bash
+     cd /path/to/keycloak-24.0.2
+     ```
+   - Run Keycloak in development mode:
+     ```bash
+     bin/kc.sh start-dev
+     ```
+   - Keycloak will start on `http://localhost:8080`. The default admin credentials are `admin/admin` (you’ll set these on first login).
+
+4. **Access the Admin Console**:
+   - Open `http://localhost:8080` in your browser.
+   - Create an admin user when prompted (e.g., username: `admin`, password: `admin`).
+
+---
+
+### Step 2: Configure Keycloak
+Follow these steps in the Keycloak Admin Console (same as with Docker):
+
+1. **Create a Realm**:
+   - Click "Create Realm" and name it (e.g., `tiktok-clone`).
+
+2. **Create a Client**:
+   - Go to "Clients" → "Create".
+   - Client ID: `tiktok-clone-app`.
+   - Protocol: `openid-connect`.
+   - Root URL: `http://localhost:5000`.
+   - Valid Redirect URIs: `http://localhost:5000/api/auth/callback/*`.
+   - Save and note the client secret from the "Credentials" tab.
+
+3. **Set Up Social Providers**:
+   - **Google**:
+     - "Identity Providers" → Add "Google".
+     - Enter your Google Client ID and Secret (from Google Cloud Console).
+   - **Facebook**:
+     - Add "Facebook" and input your App ID and Secret (from Facebook Developer Portal).
+
+4. **Email/Password**:
+   - Enable "User registration" and "Login with email" in "Realm Settings" → "Login" tab.
+
+---
+
+### Step 3: Integrate with Express.js
+#### Install Dependencies
+```bash
+npm install express mongoose keycloak-connect node-fetch qrcode
+```
+
+#### Update `app.js`
+```javascript
+const express = require('express');
+const mongoose = require('mongoose');
+const Keycloak = require('keycloak-connect');
+require('dotenv').config();
+
+const app = express();
+app.use(express.json());
+
+// MongoDB connection
+mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.log(err));
+
+// Keycloak setup
+const keycloak = new Keycloak({}, {
+  realm: 'tiktok-clone',
+  'auth-server-url': 'http://localhost:8080/', // No Docker, just local Keycloak
+  'ssl-required': 'external',
+  resource: 'tiktok-clone-app',
+  credentials: {
+    secret: process.env.KEYCLOAK_CLIENT_SECRET // From Keycloak client
+  },
+  'confidential-port': 0
+});
+
+app.use(keycloak.middleware());
+
+// Routes
+app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/videos', keycloak.protect(), require('./routes/videoRoutes')); // Protect video routes
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+```
+
+#### Update `.env`
+```
+MONGO_URI=mongodb://localhost:27017/tiktok_clone
+KEYCLOAK_CLIENT_SECRET=your_client_secret_from_keycloak
+```
+
+---
+
+### Step 4: Authentication Routes (`routes/authRoutes.js`)
+#### Google, Facebook, Email/Password Login
+Keycloak provides a unified login page for these methods:
+```javascript
+const express = require('express');
+const router = express.Router();
+const keycloak = require('../app').keycloak; // Assuming exported from app.js
+
+// Redirect to Keycloak login page
+router.get('/login', (req, res) => {
+  res.redirect('http://localhost:8080/realms/tiktok-clone/protocol/openid-connect/auth?client_id=tiktok-clone-app&redirect_uri=http://localhost:5000/api/auth/callback&response_type=code');
+});
+
+// Callback after login
+router.get('/callback', keycloak.protect(), (req, res) => {
+  const token = req.kauth.grant.access_token.token; // JWT from Keycloak
+  res.redirect(`yourapp://auth?token=${token}`); // Redirect to mobile app
+});
+
+module.exports = router;
+```
+
+---
+
+#### QR Code Login
+Since Keycloak doesn’t natively support QR code login, you’ll implement it as a custom flow:
+
+**Controller** (`controllers/authController.js`):
+```javascript
+const User = require('../models/User');
+const QRCode = require('qrcode');
+const jwt = require('jsonwebtoken');
+const fetch = require('node-fetch');
+
+exports.generateQR = async (req, res) => {
+  const userId = req.kauth.grant.access_token.content.sub; // Keycloak user ID
+  try {
+    const user = await User.findOne({ keycloakId: userId });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const qrToken = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '5m' });
+    user.qrCode = qrToken;
+    await user.save();
+
+    const qrCodeUrl = await QRCode.toDataURL(qrToken);
+    res.json({ qrCodeUrl });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+exports.verifyQR = async (req, res) => {
+  const { qrToken } = req.body;
+  try {
+    const decoded = jwt.verify(qrToken, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+    if (!user || user.qrCode !== qrToken) {
+      return res.status(401).json({ message: 'Invalid QR code' });
+    }
+    user.qrCode = null; // Invalidate after use
+    await user.save();
+
+    // Request a Keycloak token for the user
+    const response = await fetch('http://localhost:8080/realms/tiktok-clone/protocol/openid-connect/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: 'tiktok-clone-app',
+        client_secret: process.env.KEYCLOAK_CLIENT_SECRET
+      })
+    });
+    const data = await response.json();
+    res.json({ token: data.access_token });
+  } catch (error) {
+    res.status(401).json({ error: error.message });
+  }
+};
+```
+
+**Routes** (`routes/authRoutes.js` - Add to existing file):
+```javascript
+const { generateQR, verifyQR } = require('../controllers/authController');
+
+router.get('/qr', keycloak.protect(), generateQR);
+router.post('/qr/verify', verifyQR);
+```
+
+#### Update User Model (`models/User.js`)
+```javascript
+const mongoose = require('mongoose');
+
+const userSchema = new mongoose.Schema({
+  keycloakId: { type: String, unique: true }, // Store Keycloak user ID
+  username: { type: String, required: true },
+  email: { type: String },
+  qrCode: { type: String }, // For QR login
+  profilePic: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+---
+
+### Step 5: Sync Users with MongoDB
+After a user logs in via Keycloak, sync their data to MongoDB:
+```javascript
+router.get('/callback', keycloak.protect(), async (req, res) => {
+  const keycloakId = req.kauth.grant.access_token.content.sub;
+  const email = req.kauth.grant.access_token.content.email;
+  const username = req.kauth.grant.access_token.content.preferred_username;
+
+  let user = await User.findOne({ keycloakId });
+  if (!user) {
+    user = new User({ keycloakId, username, email });
+    await user.save();
+  }
+
+  const token = req.kauth.grant.access_token.token;
+  res.redirect(`yourapp://auth?token=${token}`);
+});
+```
+
+---
+
+### Step 6: Frontend Integration
+- **Google/Facebook/Email**: Redirect to `/api/auth/login`. Keycloak’s login page handles authentication, and the app receives a token via `/callback`.
+- **QR Code**: Fetch the QR code from `/qr`, display it, scan it via the app, and send the token to `/qr/verify`.
+
+---
+
+### Running Without Docker
+- Keycloak runs as a standalone Java application on your machine.
+- Ensure port `8080` is free (or configure it to another port via `bin/kc.sh start-dev --http-port=8081`).
+- No containerization knowledge is required—just Java and the downloaded files.
+
+---
+
+### Troubleshooting
+- **Java Not Found**: Ensure Java is installed and added to your system PATH.
+- **Port Conflict**: If `8080` is in use, change it in the Keycloak startup command.
+- **Connection Issues**: Verify `http://localhost:8080` is accessible before integrating with Express.js.
+
+You’re all set to use Keycloak without Docker! Let me know if you need help with any specific step or integrating it further with your Android/iOS apps.

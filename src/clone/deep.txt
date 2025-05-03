@@ -1,0 +1,834 @@
+# TikTok Clone Project Implementation
+
+I'll outline a comprehensive implementation plan for your TikTok clone with all the requested features, including social login. Here's the full-stack approach:
+
+## System Architecture
+
+### Backend (Express.js + MongoDB)
+```
+backend/
+├── config/
+│   ├── db.js             # MongoDB connection
+│   └── passport.js       # Authentication strategies
+├── controllers/
+│   ├── authController.js # Authentication logic
+│   ├── streamController.js
+│   ├── userController.js
+│   ├── chatController.js
+│   └── giftController.js
+├── models/
+│   ├── User.js
+│   ├── Stream.js
+│   ├── Message.js
+│   └── GiftTransaction.js
+├── routes/
+│   ├── authRoutes.js
+│   ├── streamRoutes.js
+│   ├── userRoutes.js
+│   ├── chatRoutes.js
+│   └── giftRoutes.js
+├── services/
+│   ├── notificationService.js
+│   ├── streamingService.js
+│   └── chatService.js
+├── utils/
+│   ├── auth.js
+│   ├── errorHandler.js
+│   └── videoProcessor.js
+├── app.js               # Main application
+└── server.js            # Server entry point
+```
+
+### Frontend (React Native)
+```
+frontend/
+├── assets/
+│   ├── images/
+│   └── fonts/
+├── components/
+│   ├── auth/
+│   ├── stream/
+│   ├── profile/
+│   ├── chat/
+│   └── common/
+├── navigation/
+│   ├── AppNavigator.js
+│   └── AuthNavigator.js
+├── screens/
+│   ├── Auth/
+│   ├── Home/
+│   ├── Stream/
+│   ├── Profile/
+│   ├── Chat/
+│   └── Settings/
+├── services/
+│   ├── api.js
+│   ├── auth.js
+│   └── socket.js
+├── store/
+│   ├── actions/
+│   ├── reducers/
+│   └── store.js
+├── App.js
+└── config.js
+```
+
+## Backend Implementation
+
+### 1. Setup and Dependencies
+
+```bash
+npm init -y
+npm install express mongoose passport passport-google-oauth20 passport-facebook passport-twitter jsonwebtoken bcryptjs cors helmet morgan socket.io multer cloudinary axios
+```
+
+### 2. Database Models (MongoDB)
+
+**User Model (models/User.js):**
+```javascript
+const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
+
+const UserSchema = new Schema({
+  username: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, select: false },
+  profilePicture: { type: String },
+  bio: { type: String },
+  followers: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+  following: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+  socialAuth: {
+    googleId: String,
+    facebookId: String,
+    twitterId: String
+  },
+  coins: { type: Number, default: 0 },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('User', UserSchema);
+```
+
+**Stream Model (models/Stream.js):**
+```javascript
+const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
+
+const StreamSchema = new Schema({
+  user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  title: { type: String, required: true },
+  description: { type: String },
+  videoUrl: { type: String, required: true },
+  thumbnailUrl: { type: String },
+  views: { type: Number, default: 0 },
+  likes: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+  comments: [{
+    user: { type: Schema.Types.ObjectId, ref: 'User' },
+    text: String,
+    createdAt: { type: Date, default: Date.now }
+  }],
+  isLive: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Stream', StreamSchema);
+```
+
+### 3. Authentication with Social Login
+
+**Passport Configuration (config/passport.js):**
+```javascript
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const FacebookStrategy = require('passport-facebook').Strategy;
+const TwitterStrategy = require('passport-twitter').Strategy;
+const User = require('../models/User');
+
+passport.serializeUser((user, done) => {
+  done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findById(id);
+    done(null, user);
+  } catch (err) {
+    done(err, null);
+  }
+});
+
+// Google Strategy
+passport.use(new GoogleStrategy({
+  clientID: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  callbackURL: '/auth/google/callback'
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    let user = await User.findOne({ 'socialAuth.googleId': profile.id });
+    
+    if (!user) {
+      user = new User({
+        username: profile.displayName,
+        email: profile.emails[0].value,
+        'socialAuth.googleId': profile.id,
+        profilePicture: profile.photos[0].value
+      });
+      await user.save();
+    }
+    
+    done(null, user);
+  } catch (err) {
+    done(err, null);
+  }
+}));
+
+// Similar strategies for Facebook and Twitter
+```
+
+### 4. Streaming API (controllers/streamController.js)
+
+```javascript
+const Stream = require('../models/Stream');
+const User = require('../models/User');
+const cloudinary = require('cloudinary').v2;
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+exports.createStream = async (req, res) => {
+  try {
+    const { title, description } = req.body;
+    const videoFile = req.files.video;
+    
+    // Upload video to Cloudinary with stream-only option
+    const result = await cloudinary.uploader.upload(videoFile.tempFilePath, {
+      resource_type: "video",
+      eager: [
+        { width: 300, height: 300, crop: "pad", audio_codec: "none" }, 
+        { width: 160, height: 100, crop: "crop", gravity: "south", audio_codec: "none" }
+      ],
+      eager_async: true,
+      type: "private", // Makes video stream-only
+      invalidate: true
+    });
+    
+    const stream = new Stream({
+      user: req.user.id,
+      title,
+      description,
+      videoUrl: result.secure_url,
+      thumbnailUrl: result.eager[0].secure_url
+    });
+    
+    await stream.save();
+    res.status(201).json(stream);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+exports.getStreams = async (req, res) => {
+  try {
+    const streams = await Stream.find().populate('user', 'username profilePicture');
+    res.json(streams);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+```
+
+### 5. Real-time Chat with Socket.io
+
+**Socket Setup (server.js):**
+```javascript
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server);
+
+// Socket.io connection
+io.on('connection', (socket) => {
+  console.log('New client connected');
+  
+  // Join room for private messaging
+  socket.on('join room', (room) => {
+    socket.join(room);
+  });
+  
+  // Handle chat messages
+  socket.on('chat message', async ({ room, message, sender }) => {
+    // Save message to DB
+    const newMessage = new Message({
+      room,
+      sender,
+      text: message,
+      createdAt: new Date()
+    });
+    await newMessage.save();
+    
+    // Emit to room
+    io.to(room).emit('new message', newMessage);
+    
+    // Send notification
+    io.emit('notification', {
+      recipient: room.replace(sender, '').replace('_', ''),
+      message: `New message from ${sender}`
+    });
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnected');
+  });
+});
+
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+```
+
+## Frontend Implementation (React Native)
+
+### 1. Setup and Dependencies
+
+```bash
+npx react-native init TikTokClone
+cd TikTokClone
+npm install @react-navigation/native @react-navigation/stack react-native-reanimated react-native-gesture-handler react-native-screens react-native-safe-area-context @react-native-community/masked-view react-native-vector-icons react-native-video socket.io-client axios passport-google-oauth20 passport-facebook passport-twitter
+```
+
+### 2. Authentication Screens
+
+**Login Screen (screens/Auth/LoginScreen.js):**
+```javascript
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, TouchableOpacity, StyleSheet } from 'react-native';
+import { GoogleSignin, GoogleSigninButton } from '@react-native-community/google-signin';
+import { LoginButton, AccessToken } from 'react-native-fbsdk';
+
+const LoginScreen = ({ navigation }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  
+  const handleGoogleLogin = async () => {
+    try {
+      await GoogleSignin.configure({
+        webClientId: 'YOUR_GOOGLE_WEB_CLIENT_ID',
+        offlineAccess: true,
+      });
+      const { idToken } = await GoogleSignin.signIn();
+      // Send idToken to backend for verification
+      const response = await axios.post('/auth/google', { idToken });
+      // Handle successful login
+    } catch (error) {
+      console.error(error);
+    }
+  };
+  
+  const handleFacebookLogin = async () => {
+    const result = await LoginManager.logInWithPermissions(['public_profile', 'email']);
+    if (result.isCancelled) {
+      return;
+    }
+    const data = await AccessToken.getCurrentAccessToken();
+    if (!data) {
+      return;
+    }
+    // Send access token to backend
+    const response = await axios.post('/auth/facebook', { accessToken: data.accessToken });
+    // Handle successful login
+  };
+  
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>TikTok Clone</Text>
+      
+      <TextInput
+        style={styles.input}
+        placeholder="Email"
+        value={email}
+        onChangeText={setEmail}
+      />
+      
+      <TextInput
+        style={styles.input}
+        placeholder="Password"
+        secureTextEntry
+        value={password}
+        onChangeText={setPassword}
+      />
+      
+      <Button title="Login" onPress={() => {}} />
+      
+      <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+        <Text style={styles.link}>Don't have an account? Register</Text>
+      </TouchableOpacity>
+      
+      <Text style={styles.divider}>OR</Text>
+      
+      <GoogleSigninButton
+        style={styles.socialButton}
+        size={GoogleSigninButton.Size.Wide}
+        color={GoogleSigninButton.Color.Dark}
+        onPress={handleGoogleLogin}
+      />
+      
+      <LoginButton
+        permissions={['public_profile', 'email']}
+        onLoginFinished={handleFacebookLogin}
+        style={styles.socialButton}
+      />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  input: {
+    height: 40,
+    borderColor: 'gray',
+    borderWidth: 1,
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 5,
+  },
+  link: {
+    color: 'blue',
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  divider: {
+    textAlign: 'center',
+    marginVertical: 20,
+  },
+  socialButton: {
+    marginTop: 10,
+    width: '100%',
+    height: 50,
+  },
+});
+
+export default LoginScreen;
+```
+
+### 3. Video Streaming Screen
+
+**Streaming Screen (screens/Stream/StreamScreen.js):**
+```javascript
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, Dimensions } from 'react-native';
+import Video from 'react-native-video';
+import io from 'socket.io-client';
+
+const { width, height } = Dimensions.get('window');
+
+const StreamScreen = () => {
+  const [streams, setStreams] = useState([]);
+  const [currentStreamIndex, setCurrentStreamIndex] = useState(0);
+  const videoRef = useRef(null);
+  const socket = useRef(null);
+  
+  useEffect(() => {
+    // Connect to Socket.io
+    socket.current = io('http://your-backend-url');
+    
+    // Fetch initial streams
+    const fetchStreams = async () => {
+      try {
+        const response = await axios.get('/api/streams');
+        setStreams(response.data);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    
+    fetchStreams();
+    
+    return () => {
+      socket.current.disconnect();
+    };
+  }, []);
+  
+  const handleViewableItemsChanged = useRef(({ viewableItems }) => {
+    if (viewableItems.length > 0) {
+      setCurrentStreamIndex(viewableItems[0].index);
+    }
+  }).current;
+  
+  const renderItem = ({ item, index }) => (
+    <View style={styles.videoContainer}>
+      <Video
+        source={{ uri: item.videoUrl }}
+        ref={index === currentStreamIndex ? videoRef : null}
+        style={styles.video}
+        resizeMode="cover"
+        paused={index !== currentStreamIndex}
+        repeat
+        controls
+      />
+      
+      <View style={styles.videoInfo}>
+        <Text style={styles.username}>@{item.user.username}</Text>
+        <Text style={styles.description}>{item.description}</Text>
+      </View>
+    </View>
+  );
+  
+  return (
+    <View style={styles.container}>
+      <FlatList
+        data={streams}
+        renderItem={renderItem}
+        keyExtractor={item => item._id}
+        pagingEnabled
+        horizontal={false}
+        showsVerticalScrollIndicator={false}
+        onViewableItemsChanged={handleViewableItemsChanged}
+        viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+      />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'black',
+  },
+  videoContainer: {
+    width,
+    height,
+    position: 'relative',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
+  },
+  videoInfo: {
+    position: 'absolute',
+    bottom: 80,
+    left: 20,
+  },
+  username: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  description: {
+    color: 'white',
+    fontSize: 14,
+  },
+});
+
+export default StreamScreen;
+```
+
+### 4. Real-time Chat Implementation
+
+**Chat Screen (screens/Chat/ChatScreen.js):**
+```javascript
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TextInput, FlatList, StyleSheet, KeyboardAvoidingView } from 'react-native';
+import io from 'socket.io-client';
+import axios from 'axios';
+
+const ChatScreen = ({ route }) => {
+  const { roomId, recipient } = route.params;
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const socket = useRef(null);
+  const flatListRef = useRef(null);
+  
+  useEffect(() => {
+    // Connect to Socket.io
+    socket.current = io('http://your-backend-url');
+    
+    // Join the room
+    socket.current.emit('join room', roomId);
+    
+    // Load previous messages
+    const loadMessages = async () => {
+      try {
+        const response = await axios.get(`/api/chat/${roomId}`);
+        setMessages(response.data);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    
+    loadMessages();
+    
+    // Listen for new messages
+    socket.current.on('new message', (message) => {
+      setMessages(prev => [...prev, message]);
+    });
+    
+    return () => {
+      socket.current.disconnect();
+    };
+  }, [roomId]);
+  
+  const sendMessage = () => {
+    if (newMessage.trim()) {
+      const messageData = {
+        room: roomId,
+        message: newMessage,
+        sender: 'currentUserId' // Replace with actual user ID
+      };
+      
+      socket.current.emit('chat message', messageData);
+      setNewMessage('');
+    }
+  };
+  
+  return (
+    <KeyboardAvoidingView 
+      style={styles.container}
+      behavior="padding"
+      keyboardVerticalOffset={90}
+    >
+      <FlatList
+        ref={flatListRef}
+        data={messages}
+        keyExtractor={(item) => item._id}
+        renderItem={({ item }) => (
+          <View style={[
+            styles.messageBubble,
+            item.sender === 'currentUserId' ? styles.sentMessage : styles.receivedMessage
+          ]}>
+            <Text style={styles.messageText}>{item.text}</Text>
+          </View>
+        )}
+        onContentSizeChange={() => flatListRef.current.scrollToEnd({ animated: true })}
+        style={styles.messagesList}
+      />
+      
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          value={newMessage}
+          onChangeText={setNewMessage}
+          placeholder="Type a message..."
+          onSubmitEditing={sendMessage}
+        />
+        <Button title="Send" onPress={sendMessage} />
+      </View>
+    </KeyboardAvoidingView>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  messagesList: {
+    flex: 1,
+    padding: 10,
+  },
+  messageBubble: {
+    maxWidth: '80%',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  sentMessage: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#0084ff',
+  },
+  receivedMessage: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e5e5ea',
+  },
+  messageText: {
+    color: 'white',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    padding: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#ccc',
+  },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 20,
+    paddingHorizontal: 15,
+    marginRight: 10,
+  },
+});
+
+export default ChatScreen;
+```
+
+### 5. Virtual Gifting System
+
+**Gift Shop Component (components/stream/GiftShop.js):**
+```javascript
+import React, { useState } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import axios from 'axios';
+
+const gifts = [
+  { id: 1, name: 'Rose', price: 10, image: require('../assets/gifts/rose.png') },
+  { id: 2, name: 'Diamond', price: 50, image: require('../assets/gifts/diamond.png') },
+  { id: 3, name: 'Car', price: 100, image: require('../assets/gifts/car.png') },
+  { id: 4, name: 'Plane', price: 500, image: require('../assets/gifts/plane.png') },
+];
+
+const GiftShop = ({ streamId, userId }) => {
+  const [userCoins, setUserCoins] = useState(0);
+  
+  useEffect(() => {
+    const fetchUserCoins = async () => {
+      try {
+        const response = await axios.get(`/api/users/${userId}/coins`);
+        setUserCoins(response.data.coins);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    
+    fetchUserCoins();
+  }, [userId]);
+  
+  const sendGift = async (gift) => {
+    if (userCoins < gift.price) {
+      alert('Not enough coins!');
+      return;
+    }
+    
+    try {
+      await axios.post('/api/gifts/send', {
+        streamId,
+        senderId: userId,
+        giftId: gift.id,
+        amount: gift.price
+      });
+      
+      // Update local coins
+      setUserCoins(prev => prev - gift.price);
+      
+      // Show animation (would be implemented with Lottie or similar)
+      alert(`You sent a ${gift.name}!`);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to send gift');
+    }
+  };
+  
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Send a Gift</Text>
+      <Text style={styles.coins}>Your coins: {userCoins}</Text>
+      
+      <FlatList
+        data={gifts}
+        numColumns={2}
+        keyExtractor={item => item.id.toString()}
+        renderItem={({ item }) => (
+          <TouchableOpacity 
+            style={styles.giftItem}
+            onPress={() => sendGift(item)}
+            disabled={userCoins < item.price}
+          >
+            <Image source={item.image} style={styles.giftImage} />
+            <Text style={styles.giftName}>{item.name}</Text>
+            <Text style={styles.giftPrice}>{item.price} coins</Text>
+          </TouchableOpacity>
+        )}
+      />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    padding: 10,
+    backgroundColor: 'white',
+    borderRadius: 10,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  coins: {
+    textAlign: 'center',
+    marginBottom: 15,
+    color: 'gold',
+    fontWeight: 'bold',
+  },
+  giftItem: {
+    flex: 1,
+    alignItems: 'center',
+    margin: 5,
+    padding: 10,
+    borderRadius: 5,
+    backgroundColor: '#f5f5f5',
+  },
+  giftImage: {
+    width: 50,
+    height: 50,
+    marginBottom: 5,
+  },
+  giftName: {
+    fontWeight: 'bold',
+  },
+  giftPrice: {
+    color: 'gold',
+  },
+});
+
+export default GiftShop;
+```
+
+## Deployment Considerations
+
+1. **Backend Deployment**:
+   - Use a platform like Heroku, AWS, or DigitalOcean
+   - Set up environment variables for sensitive data
+   - Implement proper CORS configuration
+
+2. **Database Deployment**:
+   - MongoDB Atlas for cloud-based MongoDB
+   - Set up proper indexing for performance
+   - Implement regular backups
+
+3. **Frontend Deployment**:
+   - For iOS: Deploy to App Store
+   - For Android: Deploy to Google Play Store
+   - Use CodePush for over-the-air updates
+
+4. **Video Streaming Optimization**:
+   - Consider using a CDN for video delivery
+   - Implement adaptive bitrate streaming
+   - Set up proper caching headers
+
+## Security Considerations
+
+1. Implement JWT authentication with refresh tokens
+2. Use HTTPS for all API calls
+3. Sanitize user inputs to prevent XSS and injection attacks
+4. Implement rate limiting on API endpoints
+5. Use proper permissions for video access (stream-only)
+6. Regularly update dependencies to patch vulnerabilities
+
+This implementation provides a complete foundation for your TikTok clone with all the requested features. You'll need to customize it further based on your specific requirements and design preferences.

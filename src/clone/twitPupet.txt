@@ -1,0 +1,27 @@
+const Sites = [
+  {
+    name: 'TwitterWhaleWatch',
+    url: 'https://twitter.com/whalewatchio',
+    selector: 'article div[data-testid="tweetText"]',
+    keywords: 'long',
+  },
+  {
+    name: 'CoinTelegraph',
+    url: 'https://cointelegraph.com/',
+    selector: 'h2.post-card-inline__title', // example
+    keywords: 'bitcoin,eth',
+  },
+  {
+    name: 'YourCustomSite',
+    url: 'https://example.com/news',
+    selector: '.news-item p', // adjust as needed
+    keywords: '*',
+  },
+];
+
+const elements = await page.$$eval(handler.selector, els =>
+  els.map(el => el.innerText)
+);
+
+await page.goto(handler.url, { waitUntil: 'networkidle2' });
+await page.waitForSelector(handler.selector, { timeout: 10000 });

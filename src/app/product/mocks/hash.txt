@@ -1,0 +1,65 @@
+import crypto from 'crypto';
+
+// Encryption Function
+function encryptSeed(seedPhrase: string, secretKey: string): string {
+  const iv = crypto.randomBytes(16); // Initialization vector
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(secretKey), iv);
+  let encrypted = cipher.update(seedPhrase);
+  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+// Decryption Function
+function decryptSeed(encryptedSeed: string, secretKey: string): string {
+  const [ivHex, encryptedData] = encryptedSeed.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const encryptedText = Buffer.from(encryptedData, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(secretKey), iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  return decrypted.toString();
+}
+//  SHA-256 or HMAC-SHA-512:
+import crypto from 'crypto';
+
+function hashSeed(seedPhrase: string, salt: string): string {
+  return crypto.createHmac('sha512', salt).update(seedPhrase).digest('hex');
+}
+
+import crypto from 'crypto';
+
+const SECRET_KEY = process.env.ENCRYPTION_KEY || '32characterlongsecurekey'; // Must be 32 bytes
+
+// Encrypt the mnemonic
+function encryptMnemonic(mnemonic: string): string {
+  const iv = crypto.randomBytes(16); // Random initialization vector
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(SECRET_KEY), iv);
+  let encrypted = cipher.update(mnemonic, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted; // Store IV with encrypted data
+}
+
+// Decrypt the mnemonic
+function decryptMnemonic(encryptedMnemonic: string): string {
+  const [ivHex, encryptedData] = encryptedMnemonic.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(SECRET_KEY), iv);
+  let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+import { ethers } from 'ethers';
+
+async function signTransaction(encryptedMnemonic: string, transactionData: any) {
+  const mnemonic = decryptMnemonic(encryptedMnemonic); // Decrypt mnemonic
+  const wallet = ethers.Wallet.fromMnemonic(mnemonic); // Create wallet
+  const signedTx = await wallet.signTransaction(transactionData); // Sign TX
+  return signedTx;
+}
+async function verifyBeforeDecrypt(userId: string, encryptedMnemonic: string, otp: string) {
+  const isValid = await verifyOTP(userId, otp); // Implement OTP verification
+  if (!isValid) throw new Error('Invalid OTP');
+
+  return decryptMnemonic(encryptedMnemonic); // Proceed to decrypt if OTP is valid
+}
+
